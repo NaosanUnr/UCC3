@@ -105,7 +105,6 @@
         id: id,
         nameJP: `チーム${id}`,
         nameEN: `Team ${id}`,
-        // 統計情報はFirestoreには保存せず、アプリ側で都度計算する方針
     }));
 
     const SCHEDULE_CONFIG = [
@@ -140,43 +139,48 @@
     const allMatchesCompletedMsg = document.getElementById('all-matches-completed');
     const statusMessage = document.getElementById('status-message');
 
-    // 初期化処理
+    // ★★★ アプリのメイン初期化関数 (グローバルスコープに定義) ★★★
     async function initializeApp() {
+        console.log("メインアプリのinitializeAppが呼び出されました。"); // 呼び出し確認用ログ
+        if (!window.db || !window.firebase || !window.firebase.firestore) {
+            showStatusMessage("データベース接続エラー: Firebaseの準備ができていません。", "error");
+            // Firebaseが準備できていない場合、最低限の表示やフォールバック処理を行う
+            teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA.map(t => ({...t, points:0, wins:0, losses:0, draws:0, matchesPlayed:0}))));
+            renderAppComponents();
+            setupEventListeners(); // イベントリスナーは設定しておく
+            updateUIForMode();
+            return;
+        }
         await loadTeamsFromFirestore(); 
         loadScheduleAndRoundFromLocalStorage(); 
-        // UI描画はloadTeamsFromFirestore内のonSnapshotで行われるため、ここでは呼び出さない
-        updateUIForMode(); // モード関連のUI初期設定
+        updateUIForMode(); 
         setupEventListeners();
+        // UI描画はloadTeamsFromFirestore内のonSnapshotで行われる
     }
 
-    // Firestoreからチーム情報を読み込み、リアルタイムリスナーを設定
     async function loadTeamsFromFirestore() {
+        // この関数の先頭でも window.db の存在を確認
         if (!window.db || !window.firebase || !window.firebase.firestore) {
-            showStatusMessage("データベース接続エラー: Firebaseが正しく初期化されていません。", "error");
+            showStatusMessage("loadTeamsFromFirestore: Firebaseが初期化されていません。", "error");
             teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA.map(t => ({...t, points:0, wins:0, losses:0, draws:0, matchesPlayed:0}))));
-            renderAppComponents(); 
+            renderAppComponents();
             return;
         }
         const { collection, onSnapshot, query, getDocs, doc, setDoc, writeBatch } = window.firebase.firestore;
-
         const teamsCollectionRef = collection(db, "teams");
 
-        // 初回データチェックと初期データ書き込みロジックの改善
         try {
             const querySnapshotForCheck = await getDocs(teamsCollectionRef);
             const existingTeamIds = new Set();
-            querySnapshotForCheck.forEach(docSnap => { // docSnap変数名変更
+            querySnapshotForCheck.forEach(docSnap => {
                 existingTeamIds.add(docSnap.id);
             });
-
             const teamsToCreate = INITIAL_TEAMS_DATA.filter(initialTeam => !existingTeamIds.has(initialTeam.id));
-
             if (teamsToCreate.length > 0) {
                 console.log(`Firestoreに不足している初期チームデータ (${teamsToCreate.map(t=>t.id).join(', ')}) を書き込みます。`);
                 const batch = writeBatch(db);
                 teamsToCreate.forEach(teamData => {
                     const teamDocRef = doc(db, "teams", teamData.id);
-                    // 初期データには統計情報を含めない (nameJP, nameEN, id のみ)
                     const { points, wins, losses, draws, matchesPlayed, ...baseTeamData } = teamData; 
                     batch.set(teamDocRef, baseTeamData);
                 });
@@ -188,28 +192,23 @@
             showStatusMessage("初期データのチェック/書き込みに失敗しました。", "error");
         }
 
-        // リアルタイムリスナーを設定
         const q = query(teamsCollectionRef);
         onSnapshot(q, (querySnapshot) => {
             const firestoreTeamsData = [];
-            querySnapshot.forEach((docSnap) => { // docSnap変数名変更
+            querySnapshot.forEach((docSnap) => {
                 firestoreTeamsData.push({ id: docSnap.id, ...docSnap.data() });
             });
-
-            // ローカルのteams配列をFirestoreのデータで更新
-            // 必ずTEAM_IDSの順序でソートし、統計情報を初期化
             teams = TEAM_IDS.map(id => {
                 const foundTeam = firestoreTeamsData.find(ft => ft.id === id);
                 const initialTeamBase = INITIAL_TEAMS_DATA.find(it => it.id === id) || {id: id, nameJP: `チーム${id}`, nameEN: `Team ${id}`};
                 return {
-                    ...initialTeamBase, // id, nameJP, nameEN の基本情報
-                    ...(foundTeam || {}), // Firestoreにあればそのデータで上書き
-                    points: 0, wins: 0, losses: 0, draws: 0, matchesPlayed: 0 // 統計情報を初期化
+                    ...initialTeamBase, 
+                    ...(foundTeam || {}), 
+                    points: 0, wins: 0, losses: 0, draws: 0, matchesPlayed: 0 
                 };
             });
-
-            console.log("Firestoreからチームデータを同期しました:", JSON.parse(JSON.stringify(teams))); // ログ出力用にディープコピー
-            renderAppComponents(); // データ更新後にUI全体を再描画
+            console.log("Firestoreからチームデータを同期しました:", JSON.parse(JSON.stringify(teams)));
+            renderAppComponents(); 
         }, (error) => {
             console.error("チームデータのリアルタイム同期エラー: ", error);
             showStatusMessage("データのリアルタイム同期に失敗しました。", "error");
@@ -220,7 +219,7 @@
     
     function renderAppComponents() {
         renderTeamEditor(); 
-        calculateAllTeamStats(); // これがrenderScoreboardを内部で呼ぶ
+        calculateAllTeamStats(); 
         renderMatchSchedule();
         updateNextMatchInfo();
     }
@@ -230,7 +229,6 @@
             passwordPrompt.style.display = 'block';
             passwordInput.focus();
         });
-
         submitPasswordButton.addEventListener('click', () => {
             if (passwordInput.value === PASSWORD) {
                 currentMode = 'edit';
@@ -245,44 +243,34 @@
                 passwordInput.focus();
             }
         });
-
         saveAndExitEditModeButton.addEventListener('click', () => {
             currentMode = 'view';
             updateUIForMode();
             showStatusMessage('閲覧モードに戻りました。', 'success');
         });
-
         saveTeamNamesButton.addEventListener('click', async () => {
             if (!window.db || !window.firebase || !window.firebase.firestore) {
                 showStatusMessage("データベース接続エラー。", "error");
                 return;
             }
             const { doc, setDoc, writeBatch } = window.firebase.firestore;
-
             const batch = writeBatch(db);
             let hasChanges = false;
-
             TEAM_IDS.forEach(id => {
                 const currentTeamDataInApp = teams.find(t => t.id === id);
                 const newNameJP = document.getElementById(`team-${id}-jp`).value.trim();
                 const newNameEN = document.getElementById(`team-${id}-en`).value.trim();
-                
                 const teamDataToSave = { id: id, nameJP: newNameJP, nameEN: newNameEN };
-
-                // 変更があった場合のみバッチに追加
                 if (!currentTeamDataInApp || currentTeamDataInApp.nameJP !== newNameJP || currentTeamDataInApp.nameEN !== newNameEN) {
                     const teamDocRef = doc(db, "teams", id);
-                    // Firestoreには基本情報(id, nameJP, nameEN)のみを保存。統計情報は含めない。
                     batch.set(teamDocRef, teamDataToSave, { merge: true }); 
                     hasChanges = true;
                 }
             });
-
             if (hasChanges) {
                 try {
                     await batch.commit();
                     showStatusMessage('チーム名をFirestoreに保存しました。', 'success');
-                    // onSnapshotリスナーが自動でUIを更新するため、ここでの明示的なUI更新は不要
                 } catch (error) {
                     console.error("チーム名のFirestoreへの保存エラー: ", error);
                     showStatusMessage('チーム名の保存に失敗しました。', 'error');
@@ -308,7 +296,6 @@
             teamEditorSection.style.display = 'none';
             editModeItems.forEach(item => item.style.display = 'none');
         }
-        // renderMatchSchedule(); // renderAppComponentsから呼ばれるのでここでは不要かも
     }
 
     function renderTeamEditor() {
@@ -344,10 +331,8 @@
             if (b.wins !== a.wins) return b.wins - a.wins; 
             return a.id.localeCompare(b.id); 
         });
-
         displayTeams.forEach(team => {
             const row = scoreboardBody.insertRow();
-            // 統計情報が未定義の場合0を表示
             row.innerHTML = `
                 <td class="p-3">${team.id}</td>
                 <td class="p-3 text-left">${team.nameJP}</td>
@@ -363,15 +348,12 @@
 
     function calculateAllTeamStats() {
         if (!teams || teams.length === 0) return; 
-
         teams.forEach(team => { 
             team.points = 0; team.wins = 0; team.losses = 0;
             team.draws = 0; team.matchesPlayed = 0;
         });
-
         let canAdvanceRound = true; 
         schedule.forEach((matchSet, roundIdx) => {
-            // Room 1
             if (matchSet.results.room1 && matchSet.results.room1.status === 'played') {
                 const team1 = teams.find(t => t.id === matchSet.room1[0]);
                 const team2 = teams.find(t => t.id === matchSet.room1[1]);
@@ -382,7 +364,6 @@
                     else if (matchSet.results.room1.winner === 'draw') { team1.draws++; team2.draws++; }
                 }
             } else if (roundIdx === activeRoundIndex) { canAdvanceRound = false; }
-            // Room 2
             if (matchSet.results.room2 && matchSet.results.room2.status === 'played') {
                 const team1 = teams.find(t => t.id === matchSet.room2[0]);
                 const team2 = teams.find(t => t.id === matchSet.room2[1]);
@@ -394,17 +375,16 @@
                 }
             } else if (roundIdx === activeRoundIndex) { canAdvanceRound = false; }
         });
-        
         const currentRoundData = schedule[activeRoundIndex];
         if (currentRoundData && canAdvanceRound && 
             currentRoundData.results.room1?.status === 'played' && 
             currentRoundData.results.room2?.status === 'played') {
             if (activeRoundIndex < SCHEDULE_CONFIG.length - 1) {
                 activeRoundIndex++; 
-                saveScheduleToLocalStorage(); // activeRoundIndexの変更を保存
+                saveScheduleToLocalStorage(); 
             }
         }
-        renderScoreboard(); // 統計計算後にスコアボードを再描画
+        renderScoreboard(); 
     }
     
     function renderMatchSchedule() {
@@ -554,12 +534,15 @@
         setTimeout(() => { statusMessage.style.display = 'none'; }, 3000);
     }
 
-    initializeApp();
+    // ★★★ アプリケーション開始の呼び出しを削除 ★★★
+    // initializeApp(); // ← この行をコメントアウトまたは削除
+    // Firebase初期化スクリプトから呼び出されるように変更
 
 </script>
 <script type="module">
   // 必要な関数をSDKからインポートします
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.7.1/firebase-app.js";
+  // ★ initializeApp が衝突するので firebaseInitApp という別名に変更
+  import { initializeApp as firebaseInitApp } from "https://www.gstatic.com/firebasejs/11.7.1/firebase-app.js"; 
   import { 
     getFirestore, 
     doc, 
@@ -572,7 +555,7 @@
     writeBatch 
   } from "https://www.gstatic.com/firebasejs/11.7.1/firebase-firestore.js";
 
-  // ★★★ あなたのウェブアプリのFirebase設定 (上記手順2で用意したものに置き換えてください) ★★★
+  // あなたのウェブアプリのFirebase設定 (ご提示いただいたものを使用)
   const firebaseConfig = {
     apiKey: "AIzaSyBln0YbMQHWXeZhehW8-I88TVHzyw8GMv0",
     authDomain: "ucc3-bulk-management.firebaseapp.com",
@@ -583,14 +566,13 @@
     measurementId: "G-928KZ65W3K"
   };
 
-  // Firebaseを初期化します
-  const app = initializeApp(firebaseConfig);
+  // Firebaseを初期化します (別名を付けた関数を使用)
+  const app = firebaseInitApp(firebaseConfig);
 
   // Firestore のインスタンスを取得し、グローバル変数 window.db に設定します
   window.db = getFirestore(app);
 
   // Firestoreの各関数をグローバル変数 window.firebase.firestore オブジェクトに設定します
-  // これにより、アプリ本体のJavaScriptから呼び出せるようになります。
   window.firebase = { 
     firestore: { 
       doc, 
@@ -603,8 +585,15 @@
       writeBatch 
     }
   };
-
+  
   console.log("Firebase initialized and Firestore instance (db) is ready. Firestore functions are globally available via window.firebase.firestore.");
+
+  // ★★★ メインアプリの初期化関数を呼び出す処理を追加 ★★★
+  if (typeof initializeApp === 'function') { // アプリ本体の initializeApp 関数が存在するか確認
+    initializeApp(); // アプリ本体の initializeApp 関数を呼び出す
+  } else {
+    console.error("メインアプリの initializeApp 関数が見つかりません。");
+  }
 </script>
 </body>
 </html>
