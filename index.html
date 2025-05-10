@@ -569,5 +569,30 @@
     initializeApp();
 
 </script>
+<script type="module">
+  // 必要な関数をSDKからインポートします
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/X.Y.Z/firebase-app.js"; // ★下の注意点を見てバージョン(X.Y.Z)を修正
+  // Firestore を使うために getFirestore をインポートします
+  import { getFirestore } from "https://www.gstatic.com/firebasejs/X.Y.Z/firebase-firestore.js"; // ★下の注意点を見てバージョン(X.Y.Z)を修正
+
+  // あなたのウェブアプリのFirebase設定 (★重要：手順1で取得したあなたのfirebaseConfigに置き換えてください！)
+  const firebaseConfig = {
+    apiKey: "AIzaSyYOUR_API_KEY", // 例：あなたの実際のキーに置き換える
+    authDomain: "your-project-id.firebaseapp.com", // 例：あなたの実際のドメインに置き換える
+    projectId: "your-project-id", // 例：あなたの実際のプロジェクトIDに置き換える
+    storageBucket: "your-project-id.appspot.com", // 例：あなたの実際のバケットに置き換える
+    messagingSenderId: "YOUR_SENDER_ID", // 例：あなたの実際のIDに置き換える
+    appId: "YOUR_APP_ID", // 例：あなたの実際のApp IDに置き換える
+    measurementId: "YOUR_MEASUREMENT_ID" // (任意)
+  };
+
+  // Firebaseを初期化します
+  const app = initializeApp(firebaseConfig);
+
+  // Firestore のインスタンスを取得し、他のスクリプトから参照できるように window.db に設定します
+  window.db = getFirestore(app);
+
+  console.log("Firebase initialized and Firestore instance (db) is ready."); // 確認用ログ
+</script>
 </body>
 </html>
