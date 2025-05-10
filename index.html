@@ -7,27 +7,24 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: 'Inter', sans-serif; }
-        .team-name-input { width: 100px; margin-right: 5px; } /* Adjusted for better fit */
+        .team-name-input { width: 100px; margin-right: 5px; }
         .result-button { padding: 0.25rem 0.5rem; margin: 0.1rem; border-width: 1px; border-radius: 0.25rem; transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out; }
-        .result-button.selected { /* Styles applied by JS directly for selected state */ }
-        /* Tailwind JIT が有効でない環境向けのフォールバック */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
         table { width: 100%; border-collapse: collapse; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
         th { background-color: #f2f2f2; }
-        .edit-mode-item { display: none; } /* Initially hide edit mode items */
-        .view-mode-item { display: block; } /* Initially show view mode items */
+        .edit-mode-item { display: none; }
         .password-prompt { margin-top: 10px; padding:10px; border:1px solid #ccc; background-color:#f9f9f9; border-radius: 5px;}
         .match-set { border: 1px solid #eee; padding: 10px; margin-bottom: 15px; border-radius: 5px; background-color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .match-set h3 { font-size: 1.1em; margin-bottom: 5px; color: #333; }
         .match-info { margin-bottom: 5px; }
         .room-info { font-weight: bold; }
         .result-options button { transition: background-color 0.3s ease; }
-        .result-options button:hover:not(.selected) { background-color: #e0e0e0; } /* Hover only if not selected */
+        .result-options button:hover:not(.selected) { background-color: #e0e0e0; }
         .result-display { font-weight: bold; }
         .team-editor-grid { display: grid; grid-template-columns: auto minmax(100px, 1fr) auto minmax(100px, 1fr); gap: 10px; align-items: center; margin-bottom: 10px;}
         .team-editor-grid label { font-weight: bold; text-align: right; }
-        .team-editor-grid input { width: 100%; } /* Make input take full width of its grid cell */
+        .team-editor-grid input { width: 100%; }
         .status-message { margin-top:15px; padding:10px; border:1px solid transparent; border-radius:4px; }
         #app-container { max-width: 900px; margin: 20px auto; padding: 20px; background-color: #f7fafc; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
     </style>
@@ -53,7 +50,7 @@
     <div id="team-editor-section" class="mb-6 p-4 bg-gray-50 rounded-md shadow edit-mode-item">
         <h2 class="text-2xl font-semibold mb-3 text-gray-700">チーム名編集</h2>
         <div id="team-editor-grid-container" class="space-y-3">
-            </div>
+        </div>
         <button id="saveTeamNamesButton" class="mt-4 bg-indigo-500 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded">チーム名を保存</button>
     </div>
 
@@ -74,7 +71,7 @@
                     </tr>
                 </thead>
                 <tbody id="scoreboard-body">
-                    </tbody>
+                </tbody>
             </table>
         </div>
     </div>
@@ -93,16 +90,19 @@
     <div id="match-schedule-section" class="mb-6">
         <h2 class="text-2xl font-semibold mb-3 text-gray-700">試合スケジュールと結果</h2>
         <div id="match-schedule-list" class="space-y-4">
-            </div>
+        </div>
     </div>
 
     <div id="status-message" class="status-message" style="display:none;"></div>
-
 </div>
 
 <script>
+    // ★ Firebase Firestoreの関数をインポート (Firebase SDKの<script type="module">内でdbがwindow.dbに設定されている前提)
+    // const { collection, doc, getDoc, setDoc, onSnapshot, writeBatch, query, getDocs } = firebase.firestore; // これは古い書き方
+    // window.db が設定されていれば、グローバルスコープで db が使える
+
     // グローバル定数と状態変数
-    const APP_STORAGE_KEY = 'tournamentAppData_v1';
+    // const APP_STORAGE_KEY = 'tournamentAppData_v1'; // localStorageは使わなくなるのでコメントアウトまたは削除
     const PASSWORD = '5963';
     const TEAM_IDS = ['A', 'B', 'C', 'D', 'E'];
 
@@ -125,44 +125,120 @@
         { round: 5, room1: ['B', 'C'], room2: ['D', 'E'], rest: 'A' },
     ];
 
-    let teams = [];
-    let schedule = [];
-    let currentMode = 'view'; // 'view' or 'edit'
-    let activeRoundIndex = 0; // 現在結果入力対象のラウンドインデックス
+    let teams = []; // このteams配列をFirestoreと同期させる
+    let schedule = []; // スケジュールもいずれFirestore管理にする
+    let currentMode = 'view';
+    let activeRoundIndex = 0; // これもFirestoreで管理する候補
 
-    // DOM要素の参照
+    // DOM要素の参照 (変更なし)
     const editModeButton = document.getElementById('editModeButton');
     const passwordPrompt = document.getElementById('passwordPrompt');
     const passwordInput = document.getElementById('passwordInput');
     const submitPasswordButton = document.getElementById('submitPasswordButton');
     const passwordError = document.getElementById('passwordError');
     const saveAndExitEditModeButton = document.getElementById('saveAndExitEditModeButton');
-    
     const teamEditorSection = document.getElementById('team-editor-section');
     const teamEditorGridContainer = document.getElementById('team-editor-grid-container');
     const saveTeamNamesButton = document.getElementById('saveTeamNamesButton');
-    
     const scoreboardBody = document.getElementById('scoreboard-body');
     const matchScheduleList = document.getElementById('match-schedule-list');
-    
     const nextMatchRoundInfo = document.getElementById('next-match-round-info');
     const nextMatchRoom1 = document.getElementById('next-match-room1');
     const nextMatchRoom2 = document.getElementById('next-match-room2');
     const nextMatchRest = document.getElementById('next-match-rest');
     const allMatchesCompletedMsg = document.getElementById('all-matches-completed');
-    
     const statusMessage = document.getElementById('status-message');
 
+    // --- Firestore関連の関数をインポート (Firebase SDK v9以降のモジュラースタイル) ---
+    // HTMLの <script type="module"> で window.db = getFirestore(app); としているため、
+    // ここでは直接 db を使用します。
+    // もし window.db が未定義の場合はエラーになるので、Firebase SDKの読み込みを先に確認してください。
+    // Firestoreの関数は `firebase.firestore.` ではなく、直接 `db.` から呼び出すか、
+    // または `firebase/firestore` からインポートした関数を使います。
+    // 今回は window.db を使う前提で進めます。
+    // 例: doc(db, "collectionName", "docId")
+
     // 初期化処理
-    function initializeApp() {
-        loadData(); // 保存されたデータがあれば読み込む
-        renderTeamEditor();
-        calculateAllTeamStats(); // これにより scoreboardBody も更新される
+    async function initializeApp() {
+        // Firestoreからデータをロードし、リアルタイムリスナーを設定
+        await loadTeamsFromFirestore(); 
+        // scheduleとactiveRoundIndexもFirestoreからロードするように変更予定
+        loadScheduleAndRoundFromLocalStorage(); // 一旦localStorageのままにしておく
+
+        renderTeamEditor(); // teamsデータが読み込まれた後に実行
+        calculateAllTeamStats();
         renderMatchSchedule();
         updateNextMatchInfo();
         updateUIForMode();
         setupEventListeners();
     }
+
+    // Firestoreからチーム情報を読み込み、リアルタイムリスナーを設定
+    async function loadTeamsFromFirestore() {
+        if (!window.db) {
+            showStatusMessage("データベース接続エラー: Firebaseが初期化されていません。", "error");
+            teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA)); // フォールバック
+            return;
+        }
+        const { collection, onSnapshot, query, getDocs, doc, setDoc, writeBatch } = window.firebase.firestore; // v9 SDK
+
+        const teamsCollectionRef = collection(db, "teams");
+        const q = query(teamsCollectionRef); // クエリを作成 (ここでは全チーム取得)
+
+        // リアルタイムリスナーを設定
+        onSnapshot(q, (querySnapshot) => {
+            const firestoreTeams = [];
+            querySnapshot.forEach((doc) => {
+                firestoreTeams.push({ id: doc.id, ...doc.data() });
+            });
+
+            if (firestoreTeams.length === 0) {
+                // Firestoreにチームデータがない場合、初期データを書き込む
+                console.log("Firestoreにチームデータがありません。初期データを書き込みます。");
+                const batch = writeBatch(db);
+                INITIAL_TEAMS_DATA.forEach(teamData => {
+                    const teamDocRef = doc(db, "teams", teamData.id);
+                    // pointsなどの統計情報はFirestoreに保存しないか、別途管理
+                    const { points, wins, losses, draws, matchesPlayed, ...baseTeamData } = teamData;
+                    batch.set(teamDocRef, baseTeamData);
+                });
+                batch.commit()
+                    .then(() => {
+                        console.log("初期チームデータをFirestoreに書き込みました。");
+                        // teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA)); // 初期データでローカルも更新
+                        // この後、リスナーが再度発火して最新データでteamsが更新されるはず
+                    })
+                    .catch(error => {
+                        console.error("初期チームデータの書き込みエラー: ", error);
+                        showStatusMessage("初期データの書き込みに失敗しました。", "error");
+                        teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA)); // フォールバック
+                        renderAppComponents(); // 初期データでUIを強制的に描画
+                    });
+            } else {
+                // Firestoreのデータをローカルのteams配列に反映
+                // ID順にソートして、常に同じ順序でteams配列が構成されるようにする
+                teams = firestoreTeams.sort((a, b) => TEAM_IDS.indexOf(a.id) - TEAM_IDS.indexOf(b.id));
+                console.log("Firestoreからチームデータを同期しました:", teams);
+            }
+            // チームデータが更新されたので、UIを再描画
+            renderAppComponents();
+        }, (error) => {
+            console.error("チームデータのリアルタイム同期エラー: ", error);
+            showStatusMessage("データのリアルタイム同期に失敗しました。", "error");
+            // エラー時も初期データでフォールバック表示など検討
+            teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA));
+            renderAppComponents();
+        });
+    }
+    
+    // UIコンポーネントを再描画する関数
+    function renderAppComponents() {
+        renderTeamEditor();
+        calculateAllTeamStats(); // スコアボードもここで更新される
+        renderMatchSchedule();
+        updateNextMatchInfo();
+    }
+
 
     // イベントリスナー設定
     function setupEventListeners() {
@@ -182,45 +258,71 @@
             } else {
                 passwordError.style.display = 'block';
                 passwordInput.value = '';
-                passwordInput.focus(); // パスワード間違いの場合、再度フォーカス
+                passwordInput.focus();
             }
         });
 
         saveAndExitEditModeButton.addEventListener('click', () => {
             currentMode = 'view';
-            saveData(); // モード変更時に保存
+            // saveData(); // localStorageへの保存はチーム名に関しては不要になる
             updateUIForMode();
-            showStatusMessage('閲覧モードに戻りました。変更は保存されました。', 'success');
+            showStatusMessage('閲覧モードに戻りました。', 'success'); // 保存メッセージはsaveTeamNamesButton側で
         });
 
-        // 修正点: ()_ => を () => に変更
-        saveTeamNamesButton.addEventListener('click', () => {
+        saveTeamNamesButton.addEventListener('click', async () => {
+            if (!window.db) {
+                showStatusMessage("データベース接続エラー。", "error");
+                return;
+            }
+            const { doc, setDoc, writeBatch } = window.firebase.firestore; // v9 SDK
+
+            const batch = writeBatch(db);
+            let hasChanges = false;
+
             TEAM_IDS.forEach(id => {
-                const team = teams.find(t => t.id === id);
-                if (team) {
-                    team.nameJP = document.getElementById(`team-${id}-jp`).value.trim();
-                    team.nameEN = document.getElementById(`team-${id}-en`).value.trim();
+                const currentTeamDataInApp = teams.find(t => t.id === id);
+                const newNameJP = document.getElementById(`team-${id}-jp`).value.trim();
+                const newNameEN = document.getElementById(`team-${id}-en`).value.trim();
+
+                if (currentTeamDataInApp && (currentTeamDataInApp.nameJP !== newNameJP || currentTeamDataInApp.nameEN !== newNameEN)) {
+                    const teamDocRef = doc(db, "teams", id);
+                    batch.set(teamDocRef, { id: id, nameJP: newNameJP, nameEN: newNameEN }, { merge: true }); // merge:trueで既存フィールドを保持
+                    hasChanges = true;
+                } else if (!currentTeamDataInApp) { // 万が一ローカルのteams配列にデータがない場合（通常は発生しないはず）
+                    const teamDocRef = doc(db, "teams", id);
+                    batch.set(teamDocRef, { id: id, nameJP: newNameJP, nameEN: newNameEN });
+                    hasChanges = true;
                 }
             });
-            calculateAllTeamStats(); // チーム名変更をスコアボードに反映
-            renderMatchSchedule(); // 試合スケジュール内のチーム名も更新
-            updateNextMatchInfo(); // 次の試合案内のチーム名も更新
-            saveData();
-            showStatusMessage('チーム名を保存しました。', 'success');
+
+            if (hasChanges) {
+                try {
+                    await batch.commit();
+                    showStatusMessage('チーム名をFirestoreに保存しました。', 'success');
+                    // リアルタイムリスナーが自動でローカルのteams配列とUIを更新するので、
+                    // ここで明示的に calculateAllTeamStats や renderMatchSchedule を呼ぶ必要はない場合が多い。
+                    // ただし、即時反映を確実にするため、またはリスナーの遅延を考慮して呼ぶことも検討できる。
+                    // loadTeamsFromFirestore() 内の onSnapshot がUI更新を担当する。
+                } catch (error) {
+                    console.error("チーム名のFirestoreへの保存エラー: ", error);
+                    showStatusMessage('チーム名の保存に失敗しました。', 'error');
+                }
+            } else {
+                showStatusMessage('変更はありませんでした。', 'info');
+            }
+            // チーム名変更後、ローカルのteams配列はFirestoreのリスナーによって自動更新される想定
         });
     }
 
-    // UIモード更新
+    // UIモード更新 (変更なし)
     function updateUIForMode() {
         const editModeItems = document.querySelectorAll('.edit-mode-item');
-        // const viewModeItems = document.querySelectorAll('.view-mode-item'); // This class is not actively used for hiding/showing in JS
-
         if (currentMode === 'edit') {
             editModeButton.style.display = 'none';
             saveAndExitEditModeButton.style.display = 'inline-block';
             teamEditorSection.style.display = 'block';
             editModeItems.forEach(item => item.style.display = 'block'); 
-        } else { // view mode
+        } else {
             editModeButton.style.display = 'inline-block';
             saveAndExitEditModeButton.style.display = 'none';
             passwordPrompt.style.display = 'none';
@@ -228,16 +330,19 @@
             teamEditorSection.style.display = 'none';
             editModeItems.forEach(item => item.style.display = 'none');
         }
-        renderMatchSchedule(); // モード変更で結果入力欄の表示/非表示を更新
+        renderMatchSchedule();
     }
 
-    // チーム名エディタ描画
+    // チーム名エディタ描画 (変更なし、ただしteamsが非同期で更新されることを意識)
     function renderTeamEditor() {
-        teamEditorGridContainer.innerHTML = ''; // クリア
+        if (!teams || teams.length === 0) { // teamsデータがまだロードされていない場合は何もしないか、ローディング表示
+            teamEditorGridContainer.innerHTML = '<p>チーム情報を読み込み中です...</p>';
+            return;
+        }
+        teamEditorGridContainer.innerHTML = ''; 
         teams.forEach(team => {
             const div = document.createElement('div');
             div.className = 'team-editor-grid';
-            // class="team-name-input" はCSSでスタイル指定しているが、ここではTailwindで直接指定
             div.innerHTML = `
                 <label for="team-${team.id}-jp" class="text-sm font-medium text-gray-700">チーム ${team.id} (JP):</label>
                 <input type="text" id="team-${team.id}-jp" value="${team.nameJP}" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
@@ -248,20 +353,24 @@
         });
     }
 
-    // スコアボード描画
+    // スコアボード描画 (変更なし、ただしteamsが非同期で更新されることを意識)
     function renderScoreboard() {
-        scoreboardBody.innerHTML = ''; // クリア
-        // 勝ち点が同じ場合は、(勝ち数 - 引き分け数)が多い順、それでも同じならID順などでソートキーを追加可能
-        teams.sort((a, b) => {
+        if (!teams || teams.length === 0) {
+             scoreboardBody.innerHTML = '<tr><td colspan="8">チーム情報を読み込み中です...</td></tr>';
+            return;
+        }
+        scoreboardBody.innerHTML = ''; 
+        // 勝ち点ソートなどはcalculateAllTeamStats内で行われる想定だが、表示用に再度ソートしても良い
+        const displayTeams = [...teams].sort((a, b) => { // teams自体をソートせずコピーしてソート
             if (b.points !== a.points) return b.points - a.points;
-            const diffA = a.wins - a.losses; // 得失点差のようなもの (勝ちが多い方が有利)
+            const diffA = a.wins - a.losses; 
             const diffB = b.wins - b.losses;
             if (diffB !== diffA) return diffB - diffA;
-            if (b.wins !== a.wins) return b.wins - a.wins; // それでも同じなら勝ち数
-            return a.id.localeCompare(b.id); // 最後にIDで安定ソート
+            if (b.wins !== a.wins) return b.wins - a.wins; 
+            return a.id.localeCompare(b.id); 
         });
 
-        teams.forEach(team => {
+        displayTeams.forEach(team => {
             const row = scoreboardBody.insertRow();
             row.innerHTML = `
                 <td class="p-3">${team.id}</td>
@@ -276,9 +385,11 @@
         });
     }
 
-    // 全チームの統計情報を再計算
+    // 全チームの統計情報を再計算 (変更なし、ただしteamsが非同期で更新されることを意識)
     function calculateAllTeamStats() {
-        teams.forEach(team => {
+        if (!teams || teams.length === 0) return; // teams が未ロードなら何もしない
+
+        teams.forEach(team => { // Firestoreから来たteamsオブジェクトに直接統計情報を追加
             team.points = 0;
             team.wins = 0;
             team.losses = 0;
@@ -286,243 +397,150 @@
             team.matchesPlayed = 0;
         });
 
-        let canAdvanceRound = true; // 現在のactiveRoundIndexの全試合が終了したか
+        let canAdvanceRound = true; 
         schedule.forEach((matchSet, roundIdx) => {
-            // Room 1 の試合結果処理
             if (matchSet.results.room1 && matchSet.results.room1.status === 'played') {
                 const team1Id = matchSet.room1[0];
                 const team2Id = matchSet.room1[1];
                 const team1 = teams.find(t => t.id === team1Id);
                 const team2 = teams.find(t => t.id === team2Id);
-                
                 if (team1 && team2) {
-                    team1.matchesPlayed++;
-                    team2.matchesPlayed++;
-                    if (matchSet.results.room1.winner === team1Id) {
-                        team1.wins++; team1.points++; team2.losses++;
-                    } else if (matchSet.results.room1.winner === team2Id) {
-                        team2.wins++; team2.points++; team1.losses++;
-                    } else if (matchSet.results.room1.winner === 'draw') {
-                        team1.draws++; team2.draws++; // 引き分けは勝ち点0
-                    }
+                    team1.matchesPlayed++; team2.matchesPlayed++;
+                    if (matchSet.results.room1.winner === team1Id) { team1.wins++; team1.points++; team2.losses++; }
+                    else if (matchSet.results.room1.winner === team2Id) { team2.wins++; team2.points++; team1.losses++; }
+                    else if (matchSet.results.room1.winner === 'draw') { team1.draws++; team2.draws++; }
                 }
-            } else if (roundIdx === activeRoundIndex) {
-                 canAdvanceRound = false; // 現在のラウンドで未入力の試合がある
-            }
+            } else if (roundIdx === activeRoundIndex) { canAdvanceRound = false; }
 
-
-            // Room 2 の試合結果処理
             if (matchSet.results.room2 && matchSet.results.room2.status === 'played') {
                 const team1Id = matchSet.room2[0];
                 const team2Id = matchSet.room2[1];
                 const team1 = teams.find(t => t.id === team1Id);
                 const team2 = teams.find(t => t.id === team2Id);
-
                 if (team1 && team2) {
-                    team1.matchesPlayed++;
-                    team2.matchesPlayed++;
-                    if (matchSet.results.room2.winner === team1Id) {
-                        team1.wins++; team1.points++; team2.losses++;
-                    } else if (matchSet.results.room2.winner === team2Id) {
-                        team2.wins++; team2.points++; team1.losses++;
-                    } else if (matchSet.results.room2.winner === 'draw') {
-                        team1.draws++; team2.draws++;
-                    }
+                    team1.matchesPlayed++; team2.matchesPlayed++;
+                    if (matchSet.results.room2.winner === team1Id) { team1.wins++; team1.points++; team2.losses++; }
+                    else if (matchSet.results.room2.winner === team2Id) { team2.wins++; team2.points++; team1.losses++; }
+                    else if (matchSet.results.room2.winner === 'draw') { team1.draws++; team2.draws++; }
                 }
-            } else if (roundIdx === activeRoundIndex) {
-                canAdvanceRound = false; // 現在のラウンドで未入力の試合がある
-            }
+            } else if (roundIdx === activeRoundIndex) { canAdvanceRound = false; }
         });
         
-        // activeRoundIndexの更新ロジック
         const currentRoundData = schedule[activeRoundIndex];
-        if (currentRoundData && canAdvanceRound && // canAdvanceRound を使用
+        if (currentRoundData && canAdvanceRound && 
             currentRoundData.results.room1?.status === 'played' && 
             currentRoundData.results.room2?.status === 'played') {
             if (activeRoundIndex < SCHEDULE_CONFIG.length - 1) {
-                activeRoundIndex++;
+                // activeRoundIndex の更新もFirestoreで行うように変更予定
+                // updateActiveRoundIndexInFirestore(activeRoundIndex + 1);
+                activeRoundIndex++; // 一旦ローカルで更新
             }
         }
-        
-        renderScoreboard(); // スコアボードを更新
+        renderScoreboard();
     }
     
-    // 試合スケジュール描画
+    // 試合スケジュール描画 (変更なし、ただしteamsが非同期で更新されることを意識)
     function renderMatchSchedule() {
-        matchScheduleList.innerHTML = ''; // クリア
+        if (!teams || teams.length === 0 || !schedule || schedule.length === 0) {
+             matchScheduleList.innerHTML = '<p>試合情報を読み込み中です...</p>';
+            return;
+        }
+        matchScheduleList.innerHTML = ''; 
         schedule.forEach((matchSet, index) => {
             const setDiv = document.createElement('div');
             setDiv.className = 'match-set p-4 mb-4 bg-white shadow rounded-lg';
             if (index === activeRoundIndex && currentMode === 'edit') {
-                 setDiv.classList.add('border-2', 'border-blue-500', 'ring-2', 'ring-blue-300'); // 現在の編集対象ラウンドを強調
+                 setDiv.classList.add('border-2', 'border-blue-500', 'ring-2', 'ring-blue-300');
             }
-
-            const teamName = (teamId) => teams.find(t => t.id === teamId)?.nameJP || `チーム${teamId}`;
-
+            const teamName = (teamId) => teams.find(t => t.id === teamId)?.nameJP || `チーム${teamId}`; // teamsから名前を取得
             let room1ResultDisplay = '結果待ち';
             if (matchSet.results.room1 && matchSet.results.room1.status === 'played') {
-                if (matchSet.results.room1.winner === 'draw') {
-                    room1ResultDisplay = `<span class="text-yellow-700">${teamName(matchSet.room1[0])} - vs - ${teamName(matchSet.room1[1])} (引き分け)</span>`;
-                } else {
-                    const winner = teamName(matchSet.results.room1.winner);
-                    const loser = teamName(matchSet.results.room1.winner === matchSet.room1[0] ? matchSet.room1[1] : matchSet.room1[0]);
-                    room1ResultDisplay = `<span class="text-green-700">${winner} ○</span> vs <span class="text-red-700">× ${loser}</span>`;
-                }
+                if (matchSet.results.room1.winner === 'draw') room1ResultDisplay = `<span class="text-yellow-700">${teamName(matchSet.room1[0])} - vs - ${teamName(matchSet.room1[1])} (引き分け)</span>`;
+                else { const winner = teamName(matchSet.results.room1.winner); const loser = teamName(matchSet.results.room1.winner === matchSet.room1[0] ? matchSet.room1[1] : matchSet.room1[0]); room1ResultDisplay = `<span class="text-green-700">${winner} ○</span> vs <span class="text-red-700">× ${loser}</span>`; }
             }
-
             let room2ResultDisplay = '結果待ち';
             if (matchSet.results.room2 && matchSet.results.room2.status === 'played') {
-                if (matchSet.results.room2.winner === 'draw') {
-                    room2ResultDisplay = `<span class="text-yellow-700">${teamName(matchSet.room2[0])} - vs - ${teamName(matchSet.room2[1])} (引き分け)</span>`;
-                } else {
-                    const winner = teamName(matchSet.results.room2.winner);
-                    const loser = teamName(matchSet.results.room2.winner === matchSet.room2[0] ? matchSet.room2[1] : matchSet.room2[0]);
-                    room2ResultDisplay = `<span class="text-green-700">${winner} ○</span> vs <span class="text-red-700">× ${loser}</span>`;
-                }
+                if (matchSet.results.room2.winner === 'draw') room2ResultDisplay = `<span class="text-yellow-700">${teamName(matchSet.room2[0])} - vs - ${teamName(matchSet.room2[1])} (引き分け)</span>`;
+                else { const winner = teamName(matchSet.results.room2.winner); const loser = teamName(matchSet.results.room2.winner === matchSet.room2[0] ? matchSet.room2[1] : matchSet.room2[0]); room2ResultDisplay = `<span class="text-green-700">${winner} ○</span> vs <span class="text-red-700">× ${loser}</span>`; }
             }
-            
             let resultInputsHTML = '';
-            // 結果入力は、現在のactiveRoundIndexの節で、かつ編集モードの時のみ表示
             if (currentMode === 'edit' && index === activeRoundIndex) {
-                const room1Team1 = matchSet.room1[0];
-                const room1Team2 = matchSet.room1[1];
-                const room2Team1 = matchSet.room2[0];
-                const room2Team2 = matchSet.room2[1];
-
-                resultInputsHTML += `
-                    <div class="mt-3 result-options">
-                        <p class="font-semibold mb-1">Room 1 結果 (${teamName(room1Team1)} vs ${teamName(room1Team2)}):</p>
-                        <button class="result-button ${matchSet.results.room1?.winner === room1Team1 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room1', '${room1Team1}')">${teamName(room1Team1)} の勝ち</button>
-                        <button class="result-button ${matchSet.results.room1?.winner === room1Team2 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room1', '${room1Team2}')">${teamName(room1Team2)} の勝ち</button>
-                        <button class="result-button ${matchSet.results.room1?.winner === 'draw' ? 'bg-yellow-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room1', 'draw')">引き分け</button>
-                    </div>`;
-                resultInputsHTML += `
-                    <div class="mt-3 result-options">
-                        <p class="font-semibold mb-1">Room 2 結果 (${teamName(room2Team1)} vs ${teamName(room2Team2)}):</p>
-                        <button class="result-button ${matchSet.results.room2?.winner === room2Team1 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room2', '${room2Team1}')">${teamName(room2Team1)} の勝ち</button>
-                        <button class="result-button ${matchSet.results.room2?.winner === room2Team2 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room2', '${room2Team2}')">${teamName(room2Team2)} の勝ち</button>
-                        <button class="result-button ${matchSet.results.room2?.winner === 'draw' ? 'bg-yellow-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room2', 'draw')">引き分け</button>
-                    </div>`;
+                const r1t1 = matchSet.room1[0], r1t2 = matchSet.room1[1], r2t1 = matchSet.room2[0], r2t2 = matchSet.room2[1];
+                resultInputsHTML = `
+                    <div class="mt-3 result-options"> <p class="font-semibold mb-1">Room 1 結果 (${teamName(r1t1)} vs ${teamName(r1t2)}):</p> <button class="result-button ${matchSet.results.room1?.winner === r1t1 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room1', '${r1t1}')">${teamName(r1t1)} の勝ち</button> <button class="result-button ${matchSet.results.room1?.winner === r1t2 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room1', '${r1t2}')">${teamName(r1t2)} の勝ち</button> <button class="result-button ${matchSet.results.room1?.winner === 'draw' ? 'bg-yellow-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room1', 'draw')">引き分け</button> </div>
+                    <div class="mt-3 result-options"> <p class="font-semibold mb-1">Room 2 結果 (${teamName(r2t1)} vs ${teamName(r2t2)}):</p> <button class="result-button ${matchSet.results.room2?.winner === r2t1 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room2', '${r2t1}')">${teamName(r2t1)} の勝ち</button> <button class="result-button ${matchSet.results.room2?.winner === r2t2 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room2', '${r2t2}')">${teamName(r2t2)} の勝ち</button> <button class="result-button ${matchSet.results.room2?.winner === 'draw' ? 'bg-yellow-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room2', 'draw')">引き分け</button> </div>`;
             }
-
-            // 閲覧モード、または編集モードでも activeRoundIndex でない場合は結果表示のみ
             const displayResultsOnly = currentMode === 'view' || (currentMode === 'edit' && index !== activeRoundIndex);
-
             setDiv.innerHTML = `
                 <h3 class="text-xl font-semibold text-gray-800">第 ${matchSet.round} 節</h3>
-                <div class="match-info text-gray-700">
-                    <span class="room-info">Room 1:</span> ${teamName(matchSet.room1[0])} vs ${teamName(matchSet.room1[1])}
-                    <span class="result-display ml-2 ${displayResultsOnly ? '' : 'hidden'}">${room1ResultDisplay}</span>
-                </div>
-                <div class="match-info text-gray-700">
-                    <span class="room-info">Room 2:</span> ${teamName(matchSet.room2[0])} vs ${teamName(matchSet.room2[1])}
-                    <span class="result-display ml-2 ${displayResultsOnly ? '' : 'hidden'}">${room2ResultDisplay}</span>
-                </div>
+                <div class="match-info text-gray-700"> <span class="room-info">Room 1:</span> ${teamName(matchSet.room1[0])} vs ${teamName(matchSet.room1[1])} <span class="result-display ml-2 ${displayResultsOnly ? '' : 'hidden'}">${room1ResultDisplay}</span> </div>
+                <div class="match-info text-gray-700"> <span class="room-info">Room 2:</span> ${teamName(matchSet.room2[0])} vs ${teamName(matchSet.room2[1])} <span class="result-display ml-2 ${displayResultsOnly ? '' : 'hidden'}">${room2ResultDisplay}</span> </div>
                 <div class="match-info text-gray-600">休み: ${teamName(matchSet.rest)}</div>
-                ${resultInputsHTML}
-            `;
+                ${resultInputsHTML}`;
             matchScheduleList.appendChild(setDiv);
         });
     }
 
-    // 結果記録
+    // 結果記録 (ここもFirestoreに書き込むように変更が必要)
     window.recordResult = function(roundIndex, roomKey, winnerId) {
         if (currentMode !== 'edit' || roundIndex !== activeRoundIndex) return;
-
         const matchSet = schedule[roundIndex];
-        if (!matchSet.results[roomKey]) { 
-             matchSet.results[roomKey] = { winner: null, status: 'pending' };
-        }
-
+        if (!matchSet.results[roomKey]) matchSet.results[roomKey] = { winner: null, status: 'pending' };
         if (matchSet.results[roomKey].winner === winnerId && matchSet.results[roomKey].status === 'played') {
-            matchSet.results[roomKey].winner = null;
-            matchSet.results[roomKey].status = 'pending';
+            matchSet.results[roomKey].winner = null; matchSet.results[roomKey].status = 'pending';
         } else {
-            matchSet.results[roomKey].winner = winnerId; 
-            matchSet.results[roomKey].status = 'played';
+            matchSet.results[roomKey].winner = winnerId; matchSet.results[roomKey].status = 'played';
         }
-        
         calculateAllTeamStats(); 
         renderMatchSchedule();   
         updateNextMatchInfo();   
-        saveData();              
+        saveScheduleToLocalStorage(); // いずれFirestoreに置き換える
     }
 
-    // 次のマッチアップ情報更新
+    // 次のマッチアップ情報更新 (変更なし、ただしteamsが非同期で更新されることを意識)
     function updateNextMatchInfo() {
-        const nextRoundToPlay = schedule.findIndex((matchSet, index) => 
-            index >= activeRoundIndex && // activeRoundIndex以降で
-            (!matchSet.results.room1 || matchSet.results.room1.status !== 'played' || 
-             !matchSet.results.room2 || matchSet.results.room2.status !== 'played')
-        );
-
-        if (nextRoundToPlay === -1 && activeRoundIndex >= schedule.length -1 && schedule[schedule.length-1].results.room1?.status === 'played' && schedule[schedule.length-1].results.room2?.status === 'played') {
-             // 全ての試合が終了した場合
-            nextMatchRoundInfo.textContent = '';
-            nextMatchRoom1.textContent = '';
-            nextMatchRoom2.textContent = '';
-            nextMatchRest.textContent = '';
-            allMatchesCompletedMsg.style.display = 'block';
+        if (!teams || teams.length === 0 || !schedule || schedule.length === 0) {
+            nextMatchRoundInfo.textContent = '情報を読み込み中です...';
             return;
+        }
+        // ... (既存のロジック、teamName関数が正しく動作することを確認) ...
+        const nextRoundToPlay = schedule.findIndex((matchSet, index) => index >= activeRoundIndex && (!matchSet.results.room1 || matchSet.results.room1.status !== 'played' || !matchSet.results.room2 || matchSet.results.room2.status !== 'played'));
+        if (nextRoundToPlay === -1 && activeRoundIndex >= schedule.length -1 && schedule[schedule.length-1].results.room1?.status === 'played' && schedule[schedule.length-1].results.room2?.status === 'played') {
+            nextMatchRoundInfo.textContent = ''; nextMatchRoom1.textContent = ''; nextMatchRoom2.textContent = ''; nextMatchRest.textContent = '';
+            allMatchesCompletedMsg.style.display = 'block'; return;
         }
         allMatchesCompletedMsg.style.display = 'none';
-        
-        // 表示するべき節は、現在入力中の activeRoundIndex
         const displayRoundIndex = activeRoundIndex;
         const currentMatchSet = schedule[displayRoundIndex];
-
-        if (!currentMatchSet) { // 何らかの理由で currentMatchSet が見つからない場合
-            nextMatchRoundInfo.textContent = '次の試合情報はありません。';
-            nextMatchRoom1.textContent = '';
-            nextMatchRoom2.textContent = '';
-            nextMatchRest.textContent = '';
-            return;
+        if (!currentMatchSet) {
+            nextMatchRoundInfo.textContent = '次の試合情報はありません。'; nextMatchRoom1.textContent = ''; nextMatchRoom2.textContent = ''; nextMatchRest.textContent = ''; return;
         }
-
         const teamName = (teamId) => teams.find(t => t.id === teamId)?.nameJP || `チーム${teamId}`;
-
         nextMatchRoundInfo.textContent = `現在の対象: 第 ${currentMatchSet.round} 節`;
         if (currentMatchSet.results.room1?.status !== 'played' || currentMatchSet.results.room2?.status !== 'played') {
             nextMatchRoom1.textContent = `Room 1: ${teamName(currentMatchSet.room1[0])} vs ${teamName(currentMatchSet.room1[1])}`;
             nextMatchRoom2.textContent = `Room 2: ${teamName(currentMatchSet.room2[0])} vs ${teamName(currentMatchSet.room2[1])}`;
             nextMatchRest.textContent = `休み: ${teamName(currentMatchSet.rest)}`;
-        } else if (displayRoundIndex < schedule.length -1) { // 現在の節が終わり、次の節がある場合
+        } else if (displayRoundIndex < schedule.length -1) {
              const nextDisplaySet = schedule[displayRoundIndex + 1];
              nextMatchRoundInfo.textContent = `次の対戦: 第 ${nextDisplaySet.round} 節`;
              nextMatchRoom1.textContent = `Room 1: ${teamName(nextDisplaySet.room1[0])} vs ${teamName(nextDisplaySet.room1[1])}`;
              nextMatchRoom2.textContent = `Room 2: ${teamName(nextDisplaySet.room2[0])} vs ${teamName(nextDisplaySet.room2[1])}`;
              nextMatchRest.textContent = `休み: ${teamName(nextDisplaySet.rest)}`;
-        } else { // 現在の節が最終節で、それが終わった場合
-            nextMatchRoundInfo.textContent = '';
-            nextMatchRoom1.textContent = '';
-            nextMatchRoom2.textContent = '';
-            nextMatchRest.textContent = '';
+        } else {
+            nextMatchRoundInfo.textContent = ''; nextMatchRoom1.textContent = ''; nextMatchRoom2.textContent = ''; nextMatchRest.textContent = '';
             allMatchesCompletedMsg.style.display = 'block';
         }
     }
     
-    // データ保存 (localStorage)
-    function saveData() {
-        const dataToSave = {
-            teams: teams,
-            scheduleResults: schedule.map(s => s.results), 
-            activeRoundIndex: activeRoundIndex
-        };
-        try {
-            localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(dataToSave));
-        } catch (e) {
-            console.error("Error saving data to localStorage:", e);
-            showStatusMessage("データの保存に失敗しました。ブラウザのストレージ設定を確認してください。", "error");
-        }
-    }
-
-    // データ読み込み (localStorage)
-    function loadData() {
-        const savedData = localStorage.getItem(APP_STORAGE_KEY);
+    // --- localStorage関連の処理 ---
+    // loadDataとsaveDataはFirestore用に大幅に変更するので、一旦残しつつも使わない方向で。
+    // スケジュールとラウンドインデックスはまだlocalStorageを使っているので、一時的な関数を用意。
+    function loadScheduleAndRoundFromLocalStorage() {
+        const savedData = localStorage.getItem('tournamentAppData_v1_schedule'); // キーを分ける
         if (savedData) {
             try {
                 const parsedData = JSON.parse(savedData);
-                teams = parsedData.teams || JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA));
                 schedule = SCHEDULE_CONFIG.map((config, index) => ({
                     ...config,
                     results: (parsedData.scheduleResults && parsedData.scheduleResults[index]) 
@@ -531,38 +549,45 @@
                 }));
                 activeRoundIndex = parsedData.activeRoundIndex || 0;
             } catch (e) {
-                console.error("Error parsing saved data:", e);
-                resetToInitialData(); // パースエラー時は初期データに戻す
+                console.error("Error parsing schedule data:", e);
+                resetScheduleAndRound();
             }
         } else {
-            resetToInitialData();
+            resetScheduleAndRound();
         }
     }
 
-    function resetToInitialData() {
-        teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA));
+    function saveScheduleToLocalStorage() {
+        const dataToSave = {
+            scheduleResults: schedule.map(s => s.results), 
+            activeRoundIndex: activeRoundIndex
+        };
+        try {
+            localStorage.setItem('tournamentAppData_v1_schedule', JSON.stringify(dataToSave));
+        } catch (e) {
+            console.error("Error saving schedule data to localStorage:", e);
+        }
+    }
+    
+    function resetScheduleAndRound() {
         schedule = SCHEDULE_CONFIG.map(s => ({
             ...s,
             results: { room1: {winner: null, status: 'pending'}, room2: {winner: null, status: 'pending'} } 
         }));
         activeRoundIndex = 0;
     }
+    // --- ここまでlocalStorage関連の処理 ---
 
-    // ステータスメッセージ表示
+
+    // ステータスメッセージ表示 (変更なし)
     function showStatusMessage(message, type = 'info') {
         statusMessage.textContent = message;
-        statusMessage.className = 'status-message p-3 rounded-md'; // Reset classes and add base padding
-        if (type === 'success') {
-            statusMessage.classList.add('bg-green-100', 'border-green-500', 'text-green-700');
-        } else if (type === 'error') {
-            statusMessage.classList.add('bg-red-100', 'border-red-500', 'text-red-700');
-        } else { // info
-            statusMessage.classList.add('bg-blue-100', 'border-blue-500', 'text-blue-700');
-        }
+        statusMessage.className = 'status-message p-3 rounded-md';
+        if (type === 'success') statusMessage.classList.add('bg-green-100', 'border-green-500', 'text-green-700');
+        else if (type === 'error') statusMessage.classList.add('bg-red-100', 'border-red-500', 'text-red-700');
+        else statusMessage.classList.add('bg-blue-100', 'border-blue-500', 'text-blue-700');
         statusMessage.style.display = 'block';
-        setTimeout(() => {
-            statusMessage.style.display = 'none';
-        }, 3000);
+        setTimeout(() => { statusMessage.style.display = 'none'; }, 3000);
     }
 
     // アプリケーション開始
@@ -571,28 +596,52 @@
 </script>
 <script type="module">
   // 必要な関数をSDKからインポートします
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.7.1/firebase-app.js"; // ★下の注意点を見てバージョン(11.7.1 )を修正
-  // Firestore を使うために getFirestore をインポートします
-  import { getFirestore } from "https://www.gstatic.com/firebasejs/11.7.1/firebase-firestore.js"; // ★下の注意点を見てバージョン(11.7.1 )を修正
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.7.1/firebase-app.js";
+  import { 
+    getFirestore, 
+    doc, 
+    setDoc, 
+    getDoc, 
+    collection, 
+    onSnapshot, 
+    query, 
+    getDocs, 
+    writeBatch 
+  } from "https://www.gstatic.com/firebasejs/11.7.1/firebase-firestore.js";
 
-  // あなたのウェブアプリのFirebase設定 (★重要：手順1で取得したあなたのfirebaseConfigに置き換えてください！)
+  // ★★★ あなたのウェブアプリのFirebase設定 (上記手順2で用意したものに置き換えてください) ★★★
   const firebaseConfig = {
-    apiKey: "AIzaSyYOUR_API_KEY", // 例：あなたの実際のキーに置き換える
-    authDomain: "your-project-id.firebaseapp.com", // 例：あなたの実際のドメインに置き換える
-    projectId: "your-project-id", // 例：あなたの実際のプロジェクトIDに置き換える
-    storageBucket: "your-project-id.appspot.com", // 例：あなたの実際のバケットに置き換える
-    messagingSenderId: "YOUR_SENDER_ID", // 例：あなたの実際のIDに置き換える
-    appId: "YOUR_APP_ID", // 例：あなたの実際のApp IDに置き換える
-    measurementId: "YOUR_MEASUREMENT_ID" // (任意)
+    apiKey: "AIzaSyBln0YbMQHWXeZhehW8-I88TVHzyw8GMv0",
+    authDomain: "ucc3-bulk-management.firebaseapp.com",
+    projectId: "ucc3-bulk-management",
+    storageBucket: "ucc3-bulk-management.firebasestorage.app",
+    messagingSenderId: "72021537869",
+    appId: "1:72021537869:web:9309670e1a939441c4d804",
+    measurementId: "G-928KZ65W3K"
   };
 
   // Firebaseを初期化します
   const app = initializeApp(firebaseConfig);
 
-  // Firestore のインスタンスを取得し、他のスクリプトから参照できるように window.db に設定します
+  // Firestore のインスタンスを取得し、グローバル変数 window.db に設定します
   window.db = getFirestore(app);
 
-  console.log("Firebase initialized and Firestore instance (db) is ready."); // 確認用ログ
+  // Firestoreの各関数をグローバル変数 window.firebase.firestore オブジェクトに設定します
+  // これにより、アプリ本体のJavaScriptから呼び出せるようになります。
+  window.firebase = { 
+    firestore: { 
+      doc, 
+      setDoc, 
+      getDoc, 
+      collection, 
+      onSnapshot, 
+      query, 
+      getDocs, 
+      writeBatch 
+    }
+  };
+
+  console.log("Firebase initialized and Firestore instance (db) is ready. Firestore functions are globally available via window.firebase.firestore.");
 </script>
 </body>
 </html>
