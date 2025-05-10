@@ -97,12 +97,7 @@
 </div>
 
 <script>
-    // ★ Firebase Firestoreの関数をインポート (Firebase SDKの<script type="module">内でdbがwindow.dbに設定されている前提)
-    // const { collection, doc, getDoc, setDoc, onSnapshot, writeBatch, query, getDocs } = firebase.firestore; // これは古い書き方
-    // window.db が設定されていれば、グローバルスコープで db が使える
-
     // グローバル定数と状態変数
-    // const APP_STORAGE_KEY = 'tournamentAppData_v1'; // localStorageは使わなくなるのでコメントアウトまたは削除
     const PASSWORD = '5963';
     const TEAM_IDS = ['A', 'B', 'C', 'D', 'E'];
 
@@ -110,11 +105,7 @@
         id: id,
         nameJP: `チーム${id}`,
         nameEN: `Team ${id}`,
-        points: 0,
-        wins: 0,
-        losses: 0,
-        draws: 0,
-        matchesPlayed: 0
+        // 統計情報はFirestoreには保存せず、アプリ側で都度計算する方針
     }));
 
     const SCHEDULE_CONFIG = [
@@ -125,12 +116,12 @@
         { round: 5, room1: ['B', 'C'], room2: ['D', 'E'], rest: 'A' },
     ];
 
-    let teams = []; // このteams配列をFirestoreと同期させる
-    let schedule = []; // スケジュールもいずれFirestore管理にする
+    let teams = []; 
+    let schedule = []; 
     let currentMode = 'view';
-    let activeRoundIndex = 0; // これもFirestoreで管理する候補
+    let activeRoundIndex = 0;
 
-    // DOM要素の参照 (変更なし)
+    // DOM要素の参照
     const editModeButton = document.getElementById('editModeButton');
     const passwordPrompt = document.getElementById('passwordPrompt');
     const passwordInput = document.getElementById('passwordInput');
@@ -149,98 +140,91 @@
     const allMatchesCompletedMsg = document.getElementById('all-matches-completed');
     const statusMessage = document.getElementById('status-message');
 
-    // --- Firestore関連の関数をインポート (Firebase SDK v9以降のモジュラースタイル) ---
-    // HTMLの <script type="module"> で window.db = getFirestore(app); としているため、
-    // ここでは直接 db を使用します。
-    // もし window.db が未定義の場合はエラーになるので、Firebase SDKの読み込みを先に確認してください。
-    // Firestoreの関数は `firebase.firestore.` ではなく、直接 `db.` から呼び出すか、
-    // または `firebase/firestore` からインポートした関数を使います。
-    // 今回は window.db を使う前提で進めます。
-    // 例: doc(db, "collectionName", "docId")
-
     // 初期化処理
     async function initializeApp() {
-        // Firestoreからデータをロードし、リアルタイムリスナーを設定
         await loadTeamsFromFirestore(); 
-        // scheduleとactiveRoundIndexもFirestoreからロードするように変更予定
-        loadScheduleAndRoundFromLocalStorage(); // 一旦localStorageのままにしておく
-
-        renderTeamEditor(); // teamsデータが読み込まれた後に実行
-        calculateAllTeamStats();
-        renderMatchSchedule();
-        updateNextMatchInfo();
-        updateUIForMode();
+        loadScheduleAndRoundFromLocalStorage(); 
+        // UI描画はloadTeamsFromFirestore内のonSnapshotで行われるため、ここでは呼び出さない
+        updateUIForMode(); // モード関連のUI初期設定
         setupEventListeners();
     }
 
     // Firestoreからチーム情報を読み込み、リアルタイムリスナーを設定
     async function loadTeamsFromFirestore() {
-        if (!window.db) {
-            showStatusMessage("データベース接続エラー: Firebaseが初期化されていません。", "error");
-            teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA)); // フォールバック
+        if (!window.db || !window.firebase || !window.firebase.firestore) {
+            showStatusMessage("データベース接続エラー: Firebaseが正しく初期化されていません。", "error");
+            teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA.map(t => ({...t, points:0, wins:0, losses:0, draws:0, matchesPlayed:0}))));
+            renderAppComponents(); 
             return;
         }
-        const { collection, onSnapshot, query, getDocs, doc, setDoc, writeBatch } = window.firebase.firestore; // v9 SDK
+        const { collection, onSnapshot, query, getDocs, doc, setDoc, writeBatch } = window.firebase.firestore;
 
         const teamsCollectionRef = collection(db, "teams");
-        const q = query(teamsCollectionRef); // クエリを作成 (ここでは全チーム取得)
 
-        // リアルタイムリスナーを設定
-        onSnapshot(q, (querySnapshot) => {
-            const firestoreTeams = [];
-            querySnapshot.forEach((doc) => {
-                firestoreTeams.push({ id: doc.id, ...doc.data() });
+        // 初回データチェックと初期データ書き込みロジックの改善
+        try {
+            const querySnapshotForCheck = await getDocs(teamsCollectionRef);
+            const existingTeamIds = new Set();
+            querySnapshotForCheck.forEach(docSnap => { // docSnap変数名変更
+                existingTeamIds.add(docSnap.id);
             });
 
-            if (firestoreTeams.length === 0) {
-                // Firestoreにチームデータがない場合、初期データを書き込む
-                console.log("Firestoreにチームデータがありません。初期データを書き込みます。");
+            const teamsToCreate = INITIAL_TEAMS_DATA.filter(initialTeam => !existingTeamIds.has(initialTeam.id));
+
+            if (teamsToCreate.length > 0) {
+                console.log(`Firestoreに不足している初期チームデータ (${teamsToCreate.map(t=>t.id).join(', ')}) を書き込みます。`);
                 const batch = writeBatch(db);
-                INITIAL_TEAMS_DATA.forEach(teamData => {
+                teamsToCreate.forEach(teamData => {
                     const teamDocRef = doc(db, "teams", teamData.id);
-                    // pointsなどの統計情報はFirestoreに保存しないか、別途管理
-                    const { points, wins, losses, draws, matchesPlayed, ...baseTeamData } = teamData;
+                    // 初期データには統計情報を含めない (nameJP, nameEN, id のみ)
+                    const { points, wins, losses, draws, matchesPlayed, ...baseTeamData } = teamData; 
                     batch.set(teamDocRef, baseTeamData);
                 });
-                batch.commit()
-                    .then(() => {
-                        console.log("初期チームデータをFirestoreに書き込みました。");
-                        // teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA)); // 初期データでローカルも更新
-                        // この後、リスナーが再度発火して最新データでteamsが更新されるはず
-                    })
-                    .catch(error => {
-                        console.error("初期チームデータの書き込みエラー: ", error);
-                        showStatusMessage("初期データの書き込みに失敗しました。", "error");
-                        teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA)); // フォールバック
-                        renderAppComponents(); // 初期データでUIを強制的に描画
-                    });
-            } else {
-                // Firestoreのデータをローカルのteams配列に反映
-                // ID順にソートして、常に同じ順序でteams配列が構成されるようにする
-                teams = firestoreTeams.sort((a, b) => TEAM_IDS.indexOf(a.id) - TEAM_IDS.indexOf(b.id));
-                console.log("Firestoreからチームデータを同期しました:", teams);
+                await batch.commit();
+                console.log("不足していた初期チームデータをFirestoreに書き込みました。");
             }
-            // チームデータが更新されたので、UIを再描画
-            renderAppComponents();
+        } catch (error) {
+            console.error("初期チームデータのチェック/書き込みエラー: ", error);
+            showStatusMessage("初期データのチェック/書き込みに失敗しました。", "error");
+        }
+
+        // リアルタイムリスナーを設定
+        const q = query(teamsCollectionRef);
+        onSnapshot(q, (querySnapshot) => {
+            const firestoreTeamsData = [];
+            querySnapshot.forEach((docSnap) => { // docSnap変数名変更
+                firestoreTeamsData.push({ id: docSnap.id, ...docSnap.data() });
+            });
+
+            // ローカルのteams配列をFirestoreのデータで更新
+            // 必ずTEAM_IDSの順序でソートし、統計情報を初期化
+            teams = TEAM_IDS.map(id => {
+                const foundTeam = firestoreTeamsData.find(ft => ft.id === id);
+                const initialTeamBase = INITIAL_TEAMS_DATA.find(it => it.id === id) || {id: id, nameJP: `チーム${id}`, nameEN: `Team ${id}`};
+                return {
+                    ...initialTeamBase, // id, nameJP, nameEN の基本情報
+                    ...(foundTeam || {}), // Firestoreにあればそのデータで上書き
+                    points: 0, wins: 0, losses: 0, draws: 0, matchesPlayed: 0 // 統計情報を初期化
+                };
+            });
+
+            console.log("Firestoreからチームデータを同期しました:", JSON.parse(JSON.stringify(teams))); // ログ出力用にディープコピー
+            renderAppComponents(); // データ更新後にUI全体を再描画
         }, (error) => {
             console.error("チームデータのリアルタイム同期エラー: ", error);
             showStatusMessage("データのリアルタイム同期に失敗しました。", "error");
-            // エラー時も初期データでフォールバック表示など検討
-            teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA));
+            teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA.map(t => ({...t, points:0, wins:0, losses:0, draws:0, matchesPlayed:0}))));
             renderAppComponents();
         });
     }
     
-    // UIコンポーネントを再描画する関数
     function renderAppComponents() {
-        renderTeamEditor();
-        calculateAllTeamStats(); // スコアボードもここで更新される
+        renderTeamEditor(); 
+        calculateAllTeamStats(); // これがrenderScoreboardを内部で呼ぶ
         renderMatchSchedule();
         updateNextMatchInfo();
     }
 
-
-    // イベントリスナー設定
     function setupEventListeners() {
         editModeButton.addEventListener('click', () => {
             passwordPrompt.style.display = 'block';
@@ -264,17 +248,16 @@
 
         saveAndExitEditModeButton.addEventListener('click', () => {
             currentMode = 'view';
-            // saveData(); // localStorageへの保存はチーム名に関しては不要になる
             updateUIForMode();
-            showStatusMessage('閲覧モードに戻りました。', 'success'); // 保存メッセージはsaveTeamNamesButton側で
+            showStatusMessage('閲覧モードに戻りました。', 'success');
         });
 
         saveTeamNamesButton.addEventListener('click', async () => {
-            if (!window.db) {
+            if (!window.db || !window.firebase || !window.firebase.firestore) {
                 showStatusMessage("データベース接続エラー。", "error");
                 return;
             }
-            const { doc, setDoc, writeBatch } = window.firebase.firestore; // v9 SDK
+            const { doc, setDoc, writeBatch } = window.firebase.firestore;
 
             const batch = writeBatch(db);
             let hasChanges = false;
@@ -283,14 +266,14 @@
                 const currentTeamDataInApp = teams.find(t => t.id === id);
                 const newNameJP = document.getElementById(`team-${id}-jp`).value.trim();
                 const newNameEN = document.getElementById(`team-${id}-en`).value.trim();
+                
+                const teamDataToSave = { id: id, nameJP: newNameJP, nameEN: newNameEN };
 
-                if (currentTeamDataInApp && (currentTeamDataInApp.nameJP !== newNameJP || currentTeamDataInApp.nameEN !== newNameEN)) {
+                // 変更があった場合のみバッチに追加
+                if (!currentTeamDataInApp || currentTeamDataInApp.nameJP !== newNameJP || currentTeamDataInApp.nameEN !== newNameEN) {
                     const teamDocRef = doc(db, "teams", id);
-                    batch.set(teamDocRef, { id: id, nameJP: newNameJP, nameEN: newNameEN }, { merge: true }); // merge:trueで既存フィールドを保持
-                    hasChanges = true;
-                } else if (!currentTeamDataInApp) { // 万が一ローカルのteams配列にデータがない場合（通常は発生しないはず）
-                    const teamDocRef = doc(db, "teams", id);
-                    batch.set(teamDocRef, { id: id, nameJP: newNameJP, nameEN: newNameEN });
+                    // Firestoreには基本情報(id, nameJP, nameEN)のみを保存。統計情報は含めない。
+                    batch.set(teamDocRef, teamDataToSave, { merge: true }); 
                     hasChanges = true;
                 }
             });
@@ -299,10 +282,7 @@
                 try {
                     await batch.commit();
                     showStatusMessage('チーム名をFirestoreに保存しました。', 'success');
-                    // リアルタイムリスナーが自動でローカルのteams配列とUIを更新するので、
-                    // ここで明示的に calculateAllTeamStats や renderMatchSchedule を呼ぶ必要はない場合が多い。
-                    // ただし、即時反映を確実にするため、またはリスナーの遅延を考慮して呼ぶことも検討できる。
-                    // loadTeamsFromFirestore() 内の onSnapshot がUI更新を担当する。
+                    // onSnapshotリスナーが自動でUIを更新するため、ここでの明示的なUI更新は不要
                 } catch (error) {
                     console.error("チーム名のFirestoreへの保存エラー: ", error);
                     showStatusMessage('チーム名の保存に失敗しました。', 'error');
@@ -310,11 +290,9 @@
             } else {
                 showStatusMessage('変更はありませんでした。', 'info');
             }
-            // チーム名変更後、ローカルのteams配列はFirestoreのリスナーによって自動更新される想定
         });
     }
 
-    // UIモード更新 (変更なし)
     function updateUIForMode() {
         const editModeItems = document.querySelectorAll('.edit-mode-item');
         if (currentMode === 'edit') {
@@ -330,12 +308,11 @@
             teamEditorSection.style.display = 'none';
             editModeItems.forEach(item => item.style.display = 'none');
         }
-        renderMatchSchedule();
+        // renderMatchSchedule(); // renderAppComponentsから呼ばれるのでここでは不要かも
     }
 
-    // チーム名エディタ描画 (変更なし、ただしteamsが非同期で更新されることを意識)
     function renderTeamEditor() {
-        if (!teams || teams.length === 0) { // teamsデータがまだロードされていない場合は何もしないか、ローディング表示
+        if (!teams || teams.length === 0) {
             teamEditorGridContainer.innerHTML = '<p>チーム情報を読み込み中です...</p>';
             return;
         }
@@ -353,15 +330,13 @@
         });
     }
 
-    // スコアボード描画 (変更なし、ただしteamsが非同期で更新されることを意識)
     function renderScoreboard() {
         if (!teams || teams.length === 0) {
              scoreboardBody.innerHTML = '<tr><td colspan="8">チーム情報を読み込み中です...</td></tr>';
             return;
         }
         scoreboardBody.innerHTML = ''; 
-        // 勝ち点ソートなどはcalculateAllTeamStats内で行われる想定だが、表示用に再度ソートしても良い
-        const displayTeams = [...teams].sort((a, b) => { // teams自体をソートせずコピーしてソート
+        const displayTeams = [...teams].sort((a, b) => {
             if (b.points !== a.points) return b.points - a.points;
             const diffA = a.wins - a.losses; 
             const diffB = b.wins - b.losses;
@@ -372,55 +347,49 @@
 
         displayTeams.forEach(team => {
             const row = scoreboardBody.insertRow();
+            // 統計情報が未定義の場合0を表示
             row.innerHTML = `
                 <td class="p-3">${team.id}</td>
                 <td class="p-3 text-left">${team.nameJP}</td>
                 <td class="p-3 text-left">${team.nameEN}</td>
-                <td class="p-3">${team.matchesPlayed}</td>
-                <td class="p-3 text-green-600 font-semibold">${team.wins}</td>
-                <td class="p-3 text-red-600 font-semibold">${team.losses}</td>
-                <td class="p-3 text-yellow-600 font-semibold">${team.draws}</td>
-                <td class="p-3 font-bold">${team.points}</td>
+                <td class="p-3">${team.matchesPlayed || 0}</td>
+                <td class="p-3 text-green-600 font-semibold">${team.wins || 0}</td>
+                <td class="p-3 text-red-600 font-semibold">${team.losses || 0}</td>
+                <td class="p-3 text-yellow-600 font-semibold">${team.draws || 0}</td>
+                <td class="p-3 font-bold">${team.points || 0}</td>
             `;
         });
     }
 
-    // 全チームの統計情報を再計算 (変更なし、ただしteamsが非同期で更新されることを意識)
     function calculateAllTeamStats() {
-        if (!teams || teams.length === 0) return; // teams が未ロードなら何もしない
+        if (!teams || teams.length === 0) return; 
 
-        teams.forEach(team => { // Firestoreから来たteamsオブジェクトに直接統計情報を追加
-            team.points = 0;
-            team.wins = 0;
-            team.losses = 0;
-            team.draws = 0;
-            team.matchesPlayed = 0;
+        teams.forEach(team => { 
+            team.points = 0; team.wins = 0; team.losses = 0;
+            team.draws = 0; team.matchesPlayed = 0;
         });
 
         let canAdvanceRound = true; 
         schedule.forEach((matchSet, roundIdx) => {
+            // Room 1
             if (matchSet.results.room1 && matchSet.results.room1.status === 'played') {
-                const team1Id = matchSet.room1[0];
-                const team2Id = matchSet.room1[1];
-                const team1 = teams.find(t => t.id === team1Id);
-                const team2 = teams.find(t => t.id === team2Id);
+                const team1 = teams.find(t => t.id === matchSet.room1[0]);
+                const team2 = teams.find(t => t.id === matchSet.room1[1]);
                 if (team1 && team2) {
                     team1.matchesPlayed++; team2.matchesPlayed++;
-                    if (matchSet.results.room1.winner === team1Id) { team1.wins++; team1.points++; team2.losses++; }
-                    else if (matchSet.results.room1.winner === team2Id) { team2.wins++; team2.points++; team1.losses++; }
+                    if (matchSet.results.room1.winner === team1.id) { team1.wins++; team1.points++; team2.losses++; }
+                    else if (matchSet.results.room1.winner === team2.id) { team2.wins++; team2.points++; team1.losses++; }
                     else if (matchSet.results.room1.winner === 'draw') { team1.draws++; team2.draws++; }
                 }
             } else if (roundIdx === activeRoundIndex) { canAdvanceRound = false; }
-
+            // Room 2
             if (matchSet.results.room2 && matchSet.results.room2.status === 'played') {
-                const team1Id = matchSet.room2[0];
-                const team2Id = matchSet.room2[1];
-                const team1 = teams.find(t => t.id === team1Id);
-                const team2 = teams.find(t => t.id === team2Id);
+                const team1 = teams.find(t => t.id === matchSet.room2[0]);
+                const team2 = teams.find(t => t.id === matchSet.room2[1]);
                 if (team1 && team2) {
                     team1.matchesPlayed++; team2.matchesPlayed++;
-                    if (matchSet.results.room2.winner === team1Id) { team1.wins++; team1.points++; team2.losses++; }
-                    else if (matchSet.results.room2.winner === team2Id) { team2.wins++; team2.points++; team1.losses++; }
+                    if (matchSet.results.room2.winner === team1.id) { team1.wins++; team1.points++; team2.losses++; }
+                    else if (matchSet.results.room2.winner === team2.id) { team2.wins++; team2.points++; team1.losses++; }
                     else if (matchSet.results.room2.winner === 'draw') { team1.draws++; team2.draws++; }
                 }
             } else if (roundIdx === activeRoundIndex) { canAdvanceRound = false; }
@@ -431,15 +400,13 @@
             currentRoundData.results.room1?.status === 'played' && 
             currentRoundData.results.room2?.status === 'played') {
             if (activeRoundIndex < SCHEDULE_CONFIG.length - 1) {
-                // activeRoundIndex の更新もFirestoreで行うように変更予定
-                // updateActiveRoundIndexInFirestore(activeRoundIndex + 1);
-                activeRoundIndex++; // 一旦ローカルで更新
+                activeRoundIndex++; 
+                saveScheduleToLocalStorage(); // activeRoundIndexの変更を保存
             }
         }
-        renderScoreboard();
+        renderScoreboard(); // 統計計算後にスコアボードを再描画
     }
     
-    // 試合スケジュール描画 (変更なし、ただしteamsが非同期で更新されることを意識)
     function renderMatchSchedule() {
         if (!teams || teams.length === 0 || !schedule || schedule.length === 0) {
              matchScheduleList.innerHTML = '<p>試合情報を読み込み中です...</p>';
@@ -452,7 +419,10 @@
             if (index === activeRoundIndex && currentMode === 'edit') {
                  setDiv.classList.add('border-2', 'border-blue-500', 'ring-2', 'ring-blue-300');
             }
-            const teamName = (teamId) => teams.find(t => t.id === teamId)?.nameJP || `チーム${teamId}`; // teamsから名前を取得
+            const teamName = (teamId) => {
+                const team = teams.find(t => t.id === teamId);
+                return team ? team.nameJP : `チーム${teamId}`;
+            };
             let room1ResultDisplay = '結果待ち';
             if (matchSet.results.room1 && matchSet.results.room1.status === 'played') {
                 if (matchSet.results.room1.winner === 'draw') room1ResultDisplay = `<span class="text-yellow-700">${teamName(matchSet.room1[0])} - vs - ${teamName(matchSet.room1[1])} (引き分け)</span>`;
@@ -481,7 +451,6 @@
         });
     }
 
-    // 結果記録 (ここもFirestoreに書き込むように変更が必要)
     window.recordResult = function(roundIndex, roomKey, winnerId) {
         if (currentMode !== 'edit' || roundIndex !== activeRoundIndex) return;
         const matchSet = schedule[roundIndex];
@@ -494,16 +463,18 @@
         calculateAllTeamStats(); 
         renderMatchSchedule();   
         updateNextMatchInfo();   
-        saveScheduleToLocalStorage(); // いずれFirestoreに置き換える
+        saveScheduleToLocalStorage(); 
     }
 
-    // 次のマッチアップ情報更新 (変更なし、ただしteamsが非同期で更新されることを意識)
     function updateNextMatchInfo() {
         if (!teams || teams.length === 0 || !schedule || schedule.length === 0) {
             nextMatchRoundInfo.textContent = '情報を読み込み中です...';
             return;
         }
-        // ... (既存のロジック、teamName関数が正しく動作することを確認) ...
+        const teamName = (teamId) => {
+            const team = teams.find(t => t.id === teamId);
+            return team ? team.nameJP : `チーム${teamId}`;
+        };
         const nextRoundToPlay = schedule.findIndex((matchSet, index) => index >= activeRoundIndex && (!matchSet.results.room1 || matchSet.results.room1.status !== 'played' || !matchSet.results.room2 || matchSet.results.room2.status !== 'played'));
         if (nextRoundToPlay === -1 && activeRoundIndex >= schedule.length -1 && schedule[schedule.length-1].results.room1?.status === 'played' && schedule[schedule.length-1].results.room2?.status === 'played') {
             nextMatchRoundInfo.textContent = ''; nextMatchRoom1.textContent = ''; nextMatchRoom2.textContent = ''; nextMatchRest.textContent = '';
@@ -515,7 +486,6 @@
         if (!currentMatchSet) {
             nextMatchRoundInfo.textContent = '次の試合情報はありません。'; nextMatchRoom1.textContent = ''; nextMatchRoom2.textContent = ''; nextMatchRest.textContent = ''; return;
         }
-        const teamName = (teamId) => teams.find(t => t.id === teamId)?.nameJP || `チーム${teamId}`;
         nextMatchRoundInfo.textContent = `現在の対象: 第 ${currentMatchSet.round} 節`;
         if (currentMatchSet.results.room1?.status !== 'played' || currentMatchSet.results.room2?.status !== 'played') {
             nextMatchRoom1.textContent = `Room 1: ${teamName(currentMatchSet.room1[0])} vs ${teamName(currentMatchSet.room1[1])}`;
@@ -533,11 +503,8 @@
         }
     }
     
-    // --- localStorage関連の処理 ---
-    // loadDataとsaveDataはFirestore用に大幅に変更するので、一旦残しつつも使わない方向で。
-    // スケジュールとラウンドインデックスはまだlocalStorageを使っているので、一時的な関数を用意。
     function loadScheduleAndRoundFromLocalStorage() {
-        const savedData = localStorage.getItem('tournamentAppData_v1_schedule'); // キーを分ける
+        const savedData = localStorage.getItem('tournamentAppData_v1_schedule'); 
         if (savedData) {
             try {
                 const parsedData = JSON.parse(savedData);
@@ -576,10 +543,7 @@
         }));
         activeRoundIndex = 0;
     }
-    // --- ここまでlocalStorage関連の処理 ---
 
-
-    // ステータスメッセージ表示 (変更なし)
     function showStatusMessage(message, type = 'info') {
         statusMessage.textContent = message;
         statusMessage.className = 'status-message p-3 rounded-md';
@@ -590,7 +554,6 @@
         setTimeout(() => { statusMessage.style.display = 'none'; }, 3000);
     }
 
-    // アプリケーション開始
     initializeApp();
 
 </script>
