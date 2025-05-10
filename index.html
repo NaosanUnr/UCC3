@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>総当たり対戦表＆マッチアップ案内</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .team-name-input { width: 100px; margin-right: 5px; } /* Adjusted for better fit */
+        .result-button { padding: 0.25rem 0.5rem; margin: 0.1rem; border-width: 1px; border-radius: 0.25rem; transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out; }
+        .result-button.selected { /* Styles applied by JS directly for selected state */ }
+        /* Tailwind JIT が有効でない環境向けのフォールバック */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+        th { background-color: #f2f2f2; }
+        .edit-mode-item { display: none; } /* Initially hide edit mode items */
+        .view-mode-item { display: block; } /* Initially show view mode items */
+        .password-prompt { margin-top: 10px; padding:10px; border:1px solid #ccc; background-color:#f9f9f9; border-radius: 5px;}
+        .match-set { border: 1px solid #eee; padding: 10px; margin-bottom: 15px; border-radius: 5px; background-color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .match-set h3 { font-size: 1.1em; margin-bottom: 5px; color: #333; }
+        .match-info { margin-bottom: 5px; }
+        .room-info { font-weight: bold; }
+        .result-options button { transition: background-color 0.3s ease; }
+        .result-options button:hover:not(.selected) { background-color: #e0e0e0; } /* Hover only if not selected */
+        .result-display { font-weight: bold; }
+        .team-editor-grid { display: grid; grid-template-columns: auto minmax(100px, 1fr) auto minmax(100px, 1fr); gap: 10px; align-items: center; margin-bottom: 10px;}
+        .team-editor-grid label { font-weight: bold; text-align: right; }
+        .team-editor-grid input { width: 100%; } /* Make input take full width of its grid cell */
+        .status-message { margin-top:15px; padding:10px; border:1px solid transparent; border-radius:4px; }
+        #app-container { max-width: 900px; margin: 20px auto; padding: 20px; background-color: #f7fafc; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body class="bg-gray-100 p-4">
+
+<div id="app-container" class="container mx-auto p-4 bg-white shadow-lg rounded-lg">
+    <header class="mb-6 text-center">
+        <h1 class="text-3xl font-bold text-blue-600">総当たり対戦表＆マッチアップ案内</h1>
+    </header>
+
+    <div id="mode-controls" class="mb-6 p-4 bg-gray-50 rounded-md shadow">
+        <button id="editModeButton" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mr-2">編集モードへ</button>
+        <div id="passwordPrompt" class="password-prompt" style="display:none;">
+            <label for="passwordInput" class="block mb-1 font-semibold">パスワード:</label>
+            <input type="password" id="passwordInput" placeholder="4桁の数字" class="border p-2 rounded w-full md:w-1/3">
+            <button id="submitPasswordButton" class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded mt-2 md:mt-0 md:ml-2">認証</button>
+            <p id="passwordError" class="text-red-500 text-sm mt-1" style="display:none;">パスワードが違います。</p>
+        </div>
+        <button id="saveAndExitEditModeButton" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded" style="display:none;">保存して閲覧モードに戻る</button>
+    </div>
+
+    <div id="team-editor-section" class="mb-6 p-4 bg-gray-50 rounded-md shadow edit-mode-item">
+        <h2 class="text-2xl font-semibold mb-3 text-gray-700">チーム名編集</h2>
+        <div id="team-editor-grid-container" class="space-y-3">
+            </div>
+        <button id="saveTeamNamesButton" class="mt-4 bg-indigo-500 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded">チーム名を保存</button>
+    </div>
+
+    <div id="scoreboard-section" class="mb-6">
+        <h2 class="text-2xl font-semibold mb-3 text-gray-700">対戦表 (勝ち点)</h2>
+        <div class="overflow-x-auto">
+            <table class="min-w-full bg-white shadow rounded-lg">
+                <thead class="bg-gray-200">
+                    <tr>
+                        <th class="p-3 text-left">チームID</th>
+                        <th class="p-3 text-left">日本語名</th>
+                        <th class="p-3 text-left">英語名</th>
+                        <th class="p-3">試合数</th>
+                        <th class="p-3">勝</th>
+                        <th class="p-3">負</th>
+                        <th class="p-3">分</th>
+                        <th class="p-3">勝ち点</th>
+                    </tr>
+                </thead>
+                <tbody id="scoreboard-body">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="next-match-info-section" class="mb-6 p-4 bg-blue-50 border-l-4 border-blue-500 rounded-md shadow">
+        <h2 class="text-2xl font-semibold mb-3 text-blue-700">次の対戦案内</h2>
+        <div id="next-match-content">
+            <p id="next-match-round-info" class="text-lg font-medium"></p>
+            <p id="next-match-room1" class="text-md"></p>
+            <p id="next-match-room2" class="text-md"></p>
+            <p id="next-match-rest" class="text-md"></p>
+            <p id="all-matches-completed" class="text-green-600 font-semibold" style="display:none;">全試合終了しました！</p>
+        </div>
+    </div>
+    
+    <div id="match-schedule-section" class="mb-6">
+        <h2 class="text-2xl font-semibold mb-3 text-gray-700">試合スケジュールと結果</h2>
+        <div id="match-schedule-list" class="space-y-4">
+            </div>
+    </div>
+
+    <div id="status-message" class="status-message" style="display:none;"></div>
+
+</div>
+
+<script>
+    // グローバル定数と状態変数
+    const APP_STORAGE_KEY = 'tournamentAppData_v1';
+    const PASSWORD = '5963';
+    const TEAM_IDS = ['A', 'B', 'C', 'D', 'E'];
+
+    const INITIAL_TEAMS_DATA = TEAM_IDS.map(id => ({
+        id: id,
+        nameJP: `チーム${id}`,
+        nameEN: `Team ${id}`,
+        points: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        matchesPlayed: 0
+    }));
+
+    const SCHEDULE_CONFIG = [
+        { round: 1, room1: ['A', 'B'], room2: ['C', 'D'], rest: 'E' },
+        { round: 2, room1: ['A', 'C'], room2: ['B', 'E'], rest: 'D' },
+        { round: 3, room1: ['A', 'E'], room2: ['B', 'D'], rest: 'C' },
+        { round: 4, room1: ['A', 'D'], room2: ['C', 'E'], rest: 'B' },
+        { round: 5, room1: ['B', 'C'], room2: ['D', 'E'], rest: 'A' },
+    ];
+
+    let teams = [];
+    let schedule = [];
+    let currentMode = 'view'; // 'view' or 'edit'
+    let activeRoundIndex = 0; // 現在結果入力対象のラウンドインデックス
+
+    // DOM要素の参照
+    const editModeButton = document.getElementById('editModeButton');
+    const passwordPrompt = document.getElementById('passwordPrompt');
+    const passwordInput = document.getElementById('passwordInput');
+    const submitPasswordButton = document.getElementById('submitPasswordButton');
+    const passwordError = document.getElementById('passwordError');
+    const saveAndExitEditModeButton = document.getElementById('saveAndExitEditModeButton');
+    
+    const teamEditorSection = document.getElementById('team-editor-section');
+    const teamEditorGridContainer = document.getElementById('team-editor-grid-container');
+    const saveTeamNamesButton = document.getElementById('saveTeamNamesButton');
+    
+    const scoreboardBody = document.getElementById('scoreboard-body');
+    const matchScheduleList = document.getElementById('match-schedule-list');
+    
+    const nextMatchRoundInfo = document.getElementById('next-match-round-info');
+    const nextMatchRoom1 = document.getElementById('next-match-room1');
+    const nextMatchRoom2 = document.getElementById('next-match-room2');
+    const nextMatchRest = document.getElementById('next-match-rest');
+    const allMatchesCompletedMsg = document.getElementById('all-matches-completed');
+    
+    const statusMessage = document.getElementById('status-message');
+
+    // 初期化処理
+    function initializeApp() {
+        loadData(); // 保存されたデータがあれば読み込む
+        renderTeamEditor();
+        calculateAllTeamStats(); // これにより scoreboardBody も更新される
+        renderMatchSchedule();
+        updateNextMatchInfo();
+        updateUIForMode();
+        setupEventListeners();
+    }
+
+    // イベントリスナー設定
+    function setupEventListeners() {
+        editModeButton.addEventListener('click', () => {
+            passwordPrompt.style.display = 'block';
+            passwordInput.focus();
+        });
+
+        submitPasswordButton.addEventListener('click', () => {
+            if (passwordInput.value === PASSWORD) {
+                currentMode = 'edit';
+                passwordPrompt.style.display = 'none';
+                passwordInput.value = '';
+                passwordError.style.display = 'none';
+                updateUIForMode();
+                showStatusMessage('編集モードに切り替えました。', 'success');
+            } else {
+                passwordError.style.display = 'block';
+                passwordInput.value = '';
+                passwordInput.focus(); // パスワード間違いの場合、再度フォーカス
+            }
+        });
+
+        saveAndExitEditModeButton.addEventListener('click', () => {
+            currentMode = 'view';
+            saveData(); // モード変更時に保存
+            updateUIForMode();
+            showStatusMessage('閲覧モードに戻りました。変更は保存されました。', 'success');
+        });
+
+        // 修正点: ()_ => を () => に変更
+        saveTeamNamesButton.addEventListener('click', () => {
+            TEAM_IDS.forEach(id => {
+                const team = teams.find(t => t.id === id);
+                if (team) {
+                    team.nameJP = document.getElementById(`team-${id}-jp`).value.trim();
+                    team.nameEN = document.getElementById(`team-${id}-en`).value.trim();
+                }
+            });
+            calculateAllTeamStats(); // チーム名変更をスコアボードに反映
+            renderMatchSchedule(); // 試合スケジュール内のチーム名も更新
+            updateNextMatchInfo(); // 次の試合案内のチーム名も更新
+            saveData();
+            showStatusMessage('チーム名を保存しました。', 'success');
+        });
+    }
+
+    // UIモード更新
+    function updateUIForMode() {
+        const editModeItems = document.querySelectorAll('.edit-mode-item');
+        // const viewModeItems = document.querySelectorAll('.view-mode-item'); // This class is not actively used for hiding/showing in JS
+
+        if (currentMode === 'edit') {
+            editModeButton.style.display = 'none';
+            saveAndExitEditModeButton.style.display = 'inline-block';
+            teamEditorSection.style.display = 'block';
+            editModeItems.forEach(item => item.style.display = 'block'); 
+        } else { // view mode
+            editModeButton.style.display = 'inline-block';
+            saveAndExitEditModeButton.style.display = 'none';
+            passwordPrompt.style.display = 'none';
+            passwordError.style.display = 'none';
+            teamEditorSection.style.display = 'none';
+            editModeItems.forEach(item => item.style.display = 'none');
+        }
+        renderMatchSchedule(); // モード変更で結果入力欄の表示/非表示を更新
+    }
+
+    // チーム名エディタ描画
+    function renderTeamEditor() {
+        teamEditorGridContainer.innerHTML = ''; // クリア
+        teams.forEach(team => {
+            const div = document.createElement('div');
+            div.className = 'team-editor-grid';
+            // class="team-name-input" はCSSでスタイル指定しているが、ここではTailwindで直接指定
+            div.innerHTML = `
+                <label for="team-${team.id}-jp" class="text-sm font-medium text-gray-700">チーム ${team.id} (JP):</label>
+                <input type="text" id="team-${team.id}-jp" value="${team.nameJP}" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                <label for="team-${team.id}-en" class="text-sm font-medium text-gray-700">(EN):</label>
+                <input type="text" id="team-${team.id}-en" value="${team.nameEN}" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+            `;
+            teamEditorGridContainer.appendChild(div);
+        });
+    }
+
+    // スコアボード描画
+    function renderScoreboard() {
+        scoreboardBody.innerHTML = ''; // クリア
+        // 勝ち点が同じ場合は、(勝ち数 - 引き分け数)が多い順、それでも同じならID順などでソートキーを追加可能
+        teams.sort((a, b) => {
+            if (b.points !== a.points) return b.points - a.points;
+            const diffA = a.wins - a.losses; // 得失点差のようなもの (勝ちが多い方が有利)
+            const diffB = b.wins - b.losses;
+            if (diffB !== diffA) return diffB - diffA;
+            if (b.wins !== a.wins) return b.wins - a.wins; // それでも同じなら勝ち数
+            return a.id.localeCompare(b.id); // 最後にIDで安定ソート
+        });
+
+        teams.forEach(team => {
+            const row = scoreboardBody.insertRow();
+            row.innerHTML = `
+                <td class="p-3">${team.id}</td>
+                <td class="p-3 text-left">${team.nameJP}</td>
+                <td class="p-3 text-left">${team.nameEN}</td>
+                <td class="p-3">${team.matchesPlayed}</td>
+                <td class="p-3 text-green-600 font-semibold">${team.wins}</td>
+                <td class="p-3 text-red-600 font-semibold">${team.losses}</td>
+                <td class="p-3 text-yellow-600 font-semibold">${team.draws}</td>
+                <td class="p-3 font-bold">${team.points}</td>
+            `;
+        });
+    }
+
+    // 全チームの統計情報を再計算
+    function calculateAllTeamStats() {
+        teams.forEach(team => {
+            team.points = 0;
+            team.wins = 0;
+            team.losses = 0;
+            team.draws = 0;
+            team.matchesPlayed = 0;
+        });
+
+        let canAdvanceRound = true; // 現在のactiveRoundIndexの全試合が終了したか
+        schedule.forEach((matchSet, roundIdx) => {
+            // Room 1 の試合結果処理
+            if (matchSet.results.room1 && matchSet.results.room1.status === 'played') {
+                const team1Id = matchSet.room1[0];
+                const team2Id = matchSet.room1[1];
+                const team1 = teams.find(t => t.id === team1Id);
+                const team2 = teams.find(t => t.id === team2Id);
+                
+                if (team1 && team2) {
+                    team1.matchesPlayed++;
+                    team2.matchesPlayed++;
+                    if (matchSet.results.room1.winner === team1Id) {
+                        team1.wins++; team1.points++; team2.losses++;
+                    } else if (matchSet.results.room1.winner === team2Id) {
+                        team2.wins++; team2.points++; team1.losses++;
+                    } else if (matchSet.results.room1.winner === 'draw') {
+                        team1.draws++; team2.draws++; // 引き分けは勝ち点0
+                    }
+                }
+            } else if (roundIdx === activeRoundIndex) {
+                 canAdvanceRound = false; // 現在のラウンドで未入力の試合がある
+            }
+
+
+            // Room 2 の試合結果処理
+            if (matchSet.results.room2 && matchSet.results.room2.status === 'played') {
+                const team1Id = matchSet.room2[0];
+                const team2Id = matchSet.room2[1];
+                const team1 = teams.find(t => t.id === team1Id);
+                const team2 = teams.find(t => t.id === team2Id);
+
+                if (team1 && team2) {
+                    team1.matchesPlayed++;
+                    team2.matchesPlayed++;
+                    if (matchSet.results.room2.winner === team1Id) {
+                        team1.wins++; team1.points++; team2.losses++;
+                    } else if (matchSet.results.room2.winner === team2Id) {
+                        team2.wins++; team2.points++; team1.losses++;
+                    } else if (matchSet.results.room2.winner === 'draw') {
+                        team1.draws++; team2.draws++;
+                    }
+                }
+            } else if (roundIdx === activeRoundIndex) {
+                canAdvanceRound = false; // 現在のラウンドで未入力の試合がある
+            }
+        });
+        
+        // activeRoundIndexの更新ロジック
+        const currentRoundData = schedule[activeRoundIndex];
+        if (currentRoundData && canAdvanceRound && // canAdvanceRound を使用
+            currentRoundData.results.room1?.status === 'played' && 
+            currentRoundData.results.room2?.status === 'played') {
+            if (activeRoundIndex < SCHEDULE_CONFIG.length - 1) {
+                activeRoundIndex++;
+            }
+        }
+        
+        renderScoreboard(); // スコアボードを更新
+    }
+    
+    // 試合スケジュール描画
+    function renderMatchSchedule() {
+        matchScheduleList.innerHTML = ''; // クリア
+        schedule.forEach((matchSet, index) => {
+            const setDiv = document.createElement('div');
+            setDiv.className = 'match-set p-4 mb-4 bg-white shadow rounded-lg';
+            if (index === activeRoundIndex && currentMode === 'edit') {
+                 setDiv.classList.add('border-2', 'border-blue-500', 'ring-2', 'ring-blue-300'); // 現在の編集対象ラウンドを強調
+            }
+
+            const teamName = (teamId) => teams.find(t => t.id === teamId)?.nameJP || `チーム${teamId}`;
+
+            let room1ResultDisplay = '結果待ち';
+            if (matchSet.results.room1 && matchSet.results.room1.status === 'played') {
+                if (matchSet.results.room1.winner === 'draw') {
+                    room1ResultDisplay = `<span class="text-yellow-700">${teamName(matchSet.room1[0])} - vs - ${teamName(matchSet.room1[1])} (引き分け)</span>`;
+                } else {
+                    const winner = teamName(matchSet.results.room1.winner);
+                    const loser = teamName(matchSet.results.room1.winner === matchSet.room1[0] ? matchSet.room1[1] : matchSet.room1[0]);
+                    room1ResultDisplay = `<span class="text-green-700">${winner} ○</span> vs <span class="text-red-700">× ${loser}</span>`;
+                }
+            }
+
+            let room2ResultDisplay = '結果待ち';
+            if (matchSet.results.room2 && matchSet.results.room2.status === 'played') {
+                if (matchSet.results.room2.winner === 'draw') {
+                    room2ResultDisplay = `<span class="text-yellow-700">${teamName(matchSet.room2[0])} - vs - ${teamName(matchSet.room2[1])} (引き分け)</span>`;
+                } else {
+                    const winner = teamName(matchSet.results.room2.winner);
+                    const loser = teamName(matchSet.results.room2.winner === matchSet.room2[0] ? matchSet.room2[1] : matchSet.room2[0]);
+                    room2ResultDisplay = `<span class="text-green-700">${winner} ○</span> vs <span class="text-red-700">× ${loser}</span>`;
+                }
+            }
+            
+            let resultInputsHTML = '';
+            // 結果入力は、現在のactiveRoundIndexの節で、かつ編集モードの時のみ表示
+            if (currentMode === 'edit' && index === activeRoundIndex) {
+                const room1Team1 = matchSet.room1[0];
+                const room1Team2 = matchSet.room1[1];
+                const room2Team1 = matchSet.room2[0];
+                const room2Team2 = matchSet.room2[1];
+
+                resultInputsHTML += `
+                    <div class="mt-3 result-options">
+                        <p class="font-semibold mb-1">Room 1 結果 (${teamName(room1Team1)} vs ${teamName(room1Team2)}):</p>
+                        <button class="result-button ${matchSet.results.room1?.winner === room1Team1 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room1', '${room1Team1}')">${teamName(room1Team1)} の勝ち</button>
+                        <button class="result-button ${matchSet.results.room1?.winner === room1Team2 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room1', '${room1Team2}')">${teamName(room1Team2)} の勝ち</button>
+                        <button class="result-button ${matchSet.results.room1?.winner === 'draw' ? 'bg-yellow-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room1', 'draw')">引き分け</button>
+                    </div>`;
+                resultInputsHTML += `
+                    <div class="mt-3 result-options">
+                        <p class="font-semibold mb-1">Room 2 結果 (${teamName(room2Team1)} vs ${teamName(room2Team2)}):</p>
+                        <button class="result-button ${matchSet.results.room2?.winner === room2Team1 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room2', '${room2Team1}')">${teamName(room2Team1)} の勝ち</button>
+                        <button class="result-button ${matchSet.results.room2?.winner === room2Team2 ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room2', '${room2Team2}')">${teamName(room2Team2)} の勝ち</button>
+                        <button class="result-button ${matchSet.results.room2?.winner === 'draw' ? 'bg-yellow-500 text-white' : 'bg-gray-200 hover:bg-gray-300'}" onclick="recordResult(${index}, 'room2', 'draw')">引き分け</button>
+                    </div>`;
+            }
+
+            // 閲覧モード、または編集モードでも activeRoundIndex でない場合は結果表示のみ
+            const displayResultsOnly = currentMode === 'view' || (currentMode === 'edit' && index !== activeRoundIndex);
+
+            setDiv.innerHTML = `
+                <h3 class="text-xl font-semibold text-gray-800">第 ${matchSet.round} 節</h3>
+                <div class="match-info text-gray-700">
+                    <span class="room-info">Room 1:</span> ${teamName(matchSet.room1[0])} vs ${teamName(matchSet.room1[1])}
+                    <span class="result-display ml-2 ${displayResultsOnly ? '' : 'hidden'}">${room1ResultDisplay}</span>
+                </div>
+                <div class="match-info text-gray-700">
+                    <span class="room-info">Room 2:</span> ${teamName(matchSet.room2[0])} vs ${teamName(matchSet.room2[1])}
+                    <span class="result-display ml-2 ${displayResultsOnly ? '' : 'hidden'}">${room2ResultDisplay}</span>
+                </div>
+                <div class="match-info text-gray-600">休み: ${teamName(matchSet.rest)}</div>
+                ${resultInputsHTML}
+            `;
+            matchScheduleList.appendChild(setDiv);
+        });
+    }
+
+    // 結果記録
+    window.recordResult = function(roundIndex, roomKey, winnerId) {
+        if (currentMode !== 'edit' || roundIndex !== activeRoundIndex) return;
+
+        const matchSet = schedule[roundIndex];
+        if (!matchSet.results[roomKey]) { 
+             matchSet.results[roomKey] = { winner: null, status: 'pending' };
+        }
+
+        if (matchSet.results[roomKey].winner === winnerId && matchSet.results[roomKey].status === 'played') {
+            matchSet.results[roomKey].winner = null;
+            matchSet.results[roomKey].status = 'pending';
+        } else {
+            matchSet.results[roomKey].winner = winnerId; 
+            matchSet.results[roomKey].status = 'played';
+        }
+        
+        calculateAllTeamStats(); 
+        renderMatchSchedule();   
+        updateNextMatchInfo();   
+        saveData();              
+    }
+
+    // 次のマッチアップ情報更新
+    function updateNextMatchInfo() {
+        const nextRoundToPlay = schedule.findIndex((matchSet, index) => 
+            index >= activeRoundIndex && // activeRoundIndex以降で
+            (!matchSet.results.room1 || matchSet.results.room1.status !== 'played' || 
+             !matchSet.results.room2 || matchSet.results.room2.status !== 'played')
+        );
+
+        if (nextRoundToPlay === -1 && activeRoundIndex >= schedule.length -1 && schedule[schedule.length-1].results.room1?.status === 'played' && schedule[schedule.length-1].results.room2?.status === 'played') {
+             // 全ての試合が終了した場合
+            nextMatchRoundInfo.textContent = '';
+            nextMatchRoom1.textContent = '';
+            nextMatchRoom2.textContent = '';
+            nextMatchRest.textContent = '';
+            allMatchesCompletedMsg.style.display = 'block';
+            return;
+        }
+        allMatchesCompletedMsg.style.display = 'none';
+        
+        // 表示するべき節は、現在入力中の activeRoundIndex
+        const displayRoundIndex = activeRoundIndex;
+        const currentMatchSet = schedule[displayRoundIndex];
+
+        if (!currentMatchSet) { // 何らかの理由で currentMatchSet が見つからない場合
+            nextMatchRoundInfo.textContent = '次の試合情報はありません。';
+            nextMatchRoom1.textContent = '';
+            nextMatchRoom2.textContent = '';
+            nextMatchRest.textContent = '';
+            return;
+        }
+
+        const teamName = (teamId) => teams.find(t => t.id === teamId)?.nameJP || `チーム${teamId}`;
+
+        nextMatchRoundInfo.textContent = `現在の対象: 第 ${currentMatchSet.round} 節`;
+        if (currentMatchSet.results.room1?.status !== 'played' || currentMatchSet.results.room2?.status !== 'played') {
+            nextMatchRoom1.textContent = `Room 1: ${teamName(currentMatchSet.room1[0])} vs ${teamName(currentMatchSet.room1[1])}`;
+            nextMatchRoom2.textContent = `Room 2: ${teamName(currentMatchSet.room2[0])} vs ${teamName(currentMatchSet.room2[1])}`;
+            nextMatchRest.textContent = `休み: ${teamName(currentMatchSet.rest)}`;
+        } else if (displayRoundIndex < schedule.length -1) { // 現在の節が終わり、次の節がある場合
+             const nextDisplaySet = schedule[displayRoundIndex + 1];
+             nextMatchRoundInfo.textContent = `次の対戦: 第 ${nextDisplaySet.round} 節`;
+             nextMatchRoom1.textContent = `Room 1: ${teamName(nextDisplaySet.room1[0])} vs ${teamName(nextDisplaySet.room1[1])}`;
+             nextMatchRoom2.textContent = `Room 2: ${teamName(nextDisplaySet.room2[0])} vs ${teamName(nextDisplaySet.room2[1])}`;
+             nextMatchRest.textContent = `休み: ${teamName(nextDisplaySet.rest)}`;
+        } else { // 現在の節が最終節で、それが終わった場合
+            nextMatchRoundInfo.textContent = '';
+            nextMatchRoom1.textContent = '';
+            nextMatchRoom2.textContent = '';
+            nextMatchRest.textContent = '';
+            allMatchesCompletedMsg.style.display = 'block';
+        }
+    }
+    
+    // データ保存 (localStorage)
+    function saveData() {
+        const dataToSave = {
+            teams: teams,
+            scheduleResults: schedule.map(s => s.results), 
+            activeRoundIndex: activeRoundIndex
+        };
+        try {
+            localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(dataToSave));
+        } catch (e) {
+            console.error("Error saving data to localStorage:", e);
+            showStatusMessage("データの保存に失敗しました。ブラウザのストレージ設定を確認してください。", "error");
+        }
+    }
+
+    // データ読み込み (localStorage)
+    function loadData() {
+        const savedData = localStorage.getItem(APP_STORAGE_KEY);
+        if (savedData) {
+            try {
+                const parsedData = JSON.parse(savedData);
+                teams = parsedData.teams || JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA));
+                schedule = SCHEDULE_CONFIG.map((config, index) => ({
+                    ...config,
+                    results: (parsedData.scheduleResults && parsedData.scheduleResults[index]) 
+                             ? parsedData.scheduleResults[index]
+                             : { room1: {winner: null, status: 'pending'}, room2: {winner: null, status: 'pending'} } 
+                }));
+                activeRoundIndex = parsedData.activeRoundIndex || 0;
+            } catch (e) {
+                console.error("Error parsing saved data:", e);
+                resetToInitialData(); // パースエラー時は初期データに戻す
+            }
+        } else {
+            resetToInitialData();
+        }
+    }
+
+    function resetToInitialData() {
+        teams = JSON.parse(JSON.stringify(INITIAL_TEAMS_DATA));
+        schedule = SCHEDULE_CONFIG.map(s => ({
+            ...s,
+            results: { room1: {winner: null, status: 'pending'}, room2: {winner: null, status: 'pending'} } 
+        }));
+        activeRoundIndex = 0;
+    }
+
+    // ステータスメッセージ表示
+    function showStatusMessage(message, type = 'info') {
+        statusMessage.textContent = message;
+        statusMessage.className = 'status-message p-3 rounded-md'; // Reset classes and add base padding
+        if (type === 'success') {
+            statusMessage.classList.add('bg-green-100', 'border-green-500', 'text-green-700');
+        } else if (type === 'error') {
+            statusMessage.classList.add('bg-red-100', 'border-red-500', 'text-red-700');
+        } else { // info
+            statusMessage.classList.add('bg-blue-100', 'border-blue-500', 'text-blue-700');
+        }
+        statusMessage.style.display = 'block';
+        setTimeout(() => {
+            statusMessage.style.display = 'none';
+        }, 3000);
+    }
+
+    // アプリケーション開始
+    initializeApp();
+
+</script>
+</body>
+</html>
